@@ -30,6 +30,11 @@ class TraspasoProvider extends ChangeNotifier {
     }
     notifyListeners();
   }
+  
+  void actualizarCantidad(int index, int cantidad) {
+    items[index]['cantidad'] = cantidad;
+    notifyListeners();
+  }
 
   void eliminarProducto(int index) {
     items.removeAt(index);

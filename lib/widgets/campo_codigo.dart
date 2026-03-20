@@ -22,7 +22,6 @@ class CampoCodigo extends StatefulWidget {
 }
 
 class _CampoCodigoState extends State<CampoCodigo> {
-  bool _oculto = true;
   bool _scanHecho = false;
 
   void _escanear() {
@@ -67,7 +66,7 @@ class _CampoCodigoState extends State<CampoCodigo> {
     return TextField(
       controller: widget.controller,
       focusNode:  widget.focusNode,
-      obscureText: widget.ocultable && _oculto,
+      obscureText: widget.ocultable,
       style: const TextStyle(color: Colors.white),
       onSubmitted: widget.onSubmitted,
       textInputAction: widget.onSubmitted != null
@@ -81,22 +80,9 @@ class _CampoCodigoState extends State<CampoCodigo> {
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
         ),
-        suffixIcon: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (widget.ocultable)
-              IconButton(
-                icon: Icon(
-                  _oculto ? Icons.visibility_off : Icons.visibility,
-                  color: const Color(0xFF42A5F5),
-                ),
-                onPressed: () => setState(() => _oculto = !_oculto),
-              ),
-            IconButton(
-              icon: const Icon(Icons.qr_code_scanner, color: Color(0xFF42A5F5)),
-              onPressed: _escanear,
-            ),
-          ],
+        suffixIcon: IconButton(
+          icon: const Icon(Icons.qr_code_scanner, color: Color(0xFF42A5F5)),
+          onPressed: _escanear,
         ),
       ),
     );

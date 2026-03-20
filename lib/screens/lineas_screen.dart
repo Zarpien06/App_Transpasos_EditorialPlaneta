@@ -17,12 +17,11 @@ class _LineasScreenState extends State<LineasScreen> {
   final _codigo = TextEditingController();
   final _foco   = FocusNode();
   bool _loading = false;
-  String? _ultimoAgregado; // feedback visual del último libro
+  String? _ultimoAgregado;
 
   @override
   void initState() {
     super.initState();
-    // Foco automático al entrar a la pantalla
     WidgetsBinding.instance.addPostFrameCallback((_) => _foco.requestFocus());
   }
 
@@ -33,7 +32,7 @@ class _LineasScreenState extends State<LineasScreen> {
     super.dispose();
   }
 
-  // ── Escanear: agregar inmediato ────────────────────────────────
+  // ── Escanear / Enter ───────────────────────────────────────────
   Future<void> _escanear(String raw) async {
     final codigo = raw.replaceAll(']C1', '').trim();
     if (codigo.isEmpty) return;
@@ -47,27 +46,21 @@ class _LineasScreenState extends State<LineasScreen> {
 
       if (res['status'] == 'ok') {
         final libro = Map<String, dynamic>.from(res['data']);
-        context.read<TraspasoProvider>().agregarProducto({...libro, 'cantidad': 1});
-        HapticFeedback.lightImpact();
-        setState(() => _ultimoAgregado = libro['descripcion'] ?? codigo);
+        _mostrarDialogoCantidad(libro);
       } else {
-        // No existe — preguntar si agrega manual
         _mostrarDialogoNoEncontrado(codigo);
       }
     } catch (e) {
       if (!mounted) return;
       alertaError(context, 'Error de conexión');
     } finally {
-      if (mounted) {
-        setState(() => _loading = false);
-        _foco.requestFocus(); // vuelve el foco para el siguiente escaneo
-      }
+      if (mounted) setState(() => _loading = false);
     }
   }
 
-  // ── No encontrado: pide nombre y agrega ────────────────────────
-  void _mostrarDialogoNoEncontrado(String codigo) {
-    final descCtrl = TextEditingController();
+  // ── Diálogo cantidad ───────────────────────────────────────────
+  void _mostrarDialogoCantidad(Map<String, dynamic> libro) {
+    final cantCtrl = TextEditingController(text: '1');
 
     showDialog(
       context: context,
@@ -77,42 +70,53 @@ class _LineasScreenState extends State<LineasScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Row(
           children: [
-            const Icon(Icons.help_outline_rounded, color: Color(0xFFFFA726), size: 22),
+            const Icon(Icons.book_rounded, color: Color(0xFF29B6F6), size: 20),
             const SizedBox(width: 8),
-            const Text('No encontrado', style: TextStyle(fontSize: 16)),
+            const Text('Libro encontrado', style: TextStyle(fontSize: 15)),
           ],
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Código: $codigo',
-                style: const TextStyle(color: Color(0xFF90CAF9), fontSize: 12)),
+            Text(
+              libro['descripcion'] ?? libro['codigo'] ?? '-',
+              style: const TextStyle(
+                  color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              libro['codigo'] ?? '',
+              style: const TextStyle(color: Color(0xFF888888), fontSize: 11),
+            ),
             const SizedBox(height: 16),
-            const Text('¿Cómo se llama este libro?',
-                style: TextStyle(color: Color(0xFFBBBBBB), fontSize: 13)),
-            const SizedBox(height: 10),
+            const Text('Cantidad (máx. 99)',
+                style: TextStyle(color: Color(0xFFBBBBBB), fontSize: 12)),
+            const SizedBox(height: 8),
             TextField(
-              controller: descCtrl,
+              controller: cantCtrl,
               autofocus: true,
-              style: const TextStyle(color: Colors.white),
+              keyboardType: TextInputType.number,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                  color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700),
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                _MaxValueFormatter(99),
+              ],
               decoration: InputDecoration(
-                hintText: 'Descripción del libro...',
-                hintStyle: const TextStyle(color: Color(0xFF555555)),
                 filled: true,
                 fillColor: const Color(0xFF242424),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10),
                   borderSide: BorderSide.none,
                 ),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
               ),
-              onSubmitted: (v) {
-                if (v.trim().isNotEmpty) {
-                  _agregarManual(codigo, v.trim());
-                  Navigator.pop(ctx);
-                }
-              },
+              onSubmitted: (_) => _confirmarCantidad(ctx, libro, cantCtrl),
             ),
           ],
         ),
@@ -122,102 +126,142 @@ class _LineasScreenState extends State<LineasScreen> {
               Navigator.pop(ctx);
               _foco.requestFocus();
             },
-            child: const Text('Cancelar', style: TextStyle(color: Color(0xFF888888))),
+            child: const Text('Cancelar',
+                style: TextStyle(color: Color(0xFF888888))),
           ),
-          ElevatedButton(
+          ElevatedButton.icon(
+            icon: const Icon(Icons.add_rounded, size: 18),
+            label: const Text('Agregar'),
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF1565C0),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
             ),
-            onPressed: () {
-              final desc = descCtrl.text.trim();
-              if (desc.isEmpty) return;
-              _agregarManual(codigo, desc);
-              Navigator.pop(ctx);
-            },
-            child: const Text('Agregar'),
+            onPressed: () => _confirmarCantidad(ctx, libro, cantCtrl),
           ),
         ],
       ),
     );
   }
 
-  void _agregarManual(String codigo, String descripcion) {
+  void _confirmarCantidad(
+      BuildContext ctx, Map<String, dynamic> libro, TextEditingController cantCtrl) {
+    final cant = int.tryParse(cantCtrl.text) ?? 1;
+    final cantFinal = cant.clamp(1, 99);
+
     context.read<TraspasoProvider>().agregarProducto({
-      'codigo':      codigo.isEmpty ? 'MANUAL' : codigo,
-      'descripcion': descripcion,
-      'cantidad':    1,
-      'manual':      true,
+      ...libro,
+      'cantidad': cantFinal,
     });
     HapticFeedback.lightImpact();
-    setState(() => _ultimoAgregado = descripcion);
+    setState(() => _ultimoAgregado =
+        '${libro['descripcion'] ?? libro['codigo']} x$cantFinal');
+    Navigator.pop(ctx);
     _foco.requestFocus();
   }
 
-  // ── Manual desde cero (FAB) ────────────────────────────────────
-  void _mostrarDialogoManual() {
+  // ── No encontrado: pide descripción y guarda en BD ─────────────
+  void _mostrarDialogoNoEncontrado(String codigo) {
     final descCtrl = TextEditingController();
-    final codCtrl  = TextEditingController();
+    bool guardando = false;
 
-    showModalBottomSheet(
+    showDialog(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: const Color(0xFF111111),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(
-          left: 24, right: 24, top: 20,
-          bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 36, height: 4,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setStateDialog) => AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Row(
+            children: [
+              const Icon(Icons.help_outline_rounded,
+                  color: Color(0xFFFFA726), size: 22),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text('No encontrado',
+                    style: TextStyle(fontSize: 15)),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF333333),
-                  borderRadius: BorderRadius.circular(2),
+                  color: const Color(0xFF242424),
+                  borderRadius: BorderRadius.circular(8),
                 ),
+                child: Text('Código: $codigo',
+                    style: const TextStyle(
+                        color: Color(0xFF90CAF9), fontSize: 12)),
               ),
-            ),
-            const SizedBox(height: 20),
-            const Text('Agregar manual',
-                style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 4),
-            const Text('Sin código de barras',
-                style: TextStyle(color: Color(0xFF888888), fontSize: 12)),
-            const SizedBox(height: 20),
-            TextField(
-              controller: codCtrl,
-              style: const TextStyle(color: Colors.white),
-              decoration: _deco('Código (opcional)', Icons.qr_code_rounded),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: descCtrl,
-              autofocus: true,
-              style: const TextStyle(color: Colors.white),
-              decoration: _deco('Descripción *', Icons.book_rounded),
-              onSubmitted: (_) => _guardarManual(ctx, codCtrl, descCtrl),
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.add_rounded),
-                label: const Text('AGREGAR',
-                    style: TextStyle(fontWeight: FontWeight.w700, letterSpacing: 1)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF1565C0),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              const SizedBox(height: 14),
+              const Text('Ingresa el nombre del libro\npara guardarlo en la base de datos:',
+                  style: TextStyle(color: Color(0xFFBBBBBB), fontSize: 12)),
+              const SizedBox(height: 10),
+              TextField(
+                controller: descCtrl,
+                autofocus: true,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  hintText: 'Descripción del libro...',
+                  hintStyle: const TextStyle(color: Color(0xFF555555)),
+                  filled: true,
+                  fillColor: const Color(0xFF242424),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 12),
                 ),
-                onPressed: () => _guardarManual(ctx, codCtrl, descCtrl),
+                onSubmitted: (v) async {
+                  if (v.trim().isEmpty) return;
+                  await _guardarYContinuar(
+                      ctx, codigo, v.trim(), setStateDialog,
+                      () => guardando, (val) => guardando = val);
+                },
               ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: guardando
+                  ? null
+                  : () {
+                      Navigator.pop(ctx);
+                      _foco.requestFocus();
+                    },
+              child: const Text('Cancelar',
+                  style: TextStyle(color: Color(0xFF888888))),
+            ),
+            ElevatedButton.icon(
+              icon: guardando
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.save_rounded, size: 16),
+              label: Text(guardando ? 'Guardando...' : 'Guardar'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF1565C0),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+              ),
+              onPressed: guardando
+                  ? null
+                  : () async {
+                      final desc = descCtrl.text.trim();
+                      if (desc.isEmpty) return;
+                      await _guardarYContinuar(
+                          ctx, codigo, desc, setStateDialog,
+                          () => guardando, (val) => guardando = val);
+                    },
             ),
           ],
         ),
@@ -225,34 +269,35 @@ class _LineasScreenState extends State<LineasScreen> {
     );
   }
 
-  void _guardarManual(BuildContext ctx, TextEditingController cod, TextEditingController desc) {
-    if (desc.text.trim().isEmpty) {
-      alertaError(ctx, 'Ingresa una descripción');
-      return;
+  Future<void> _guardarYContinuar(
+    BuildContext ctx,
+    String codigo,
+    String descripcion,
+    StateSetter setStateDialog,
+    bool Function() getGuardando,
+    void Function(bool) setGuardando,
+  ) async {
+    setStateDialog(() => setGuardando(true));
+    try {
+      await ApiService.guardarLibro(
+        ean: codigo.length > 7 ? codigo : '',
+        ref: codigo.length <= 7 ? codigo : '',
+        descripcion: descripcion,
+      );
+    } catch (_) {
+      // Si falla igual continúa localmente
     }
-    _agregarManual(cod.text.trim(), desc.text.trim());
-    Navigator.pop(ctx);
+    if (!mounted) return;
+  
+    // Cierra el diálogo usando el navigator del contexto del widget, no del dialog
+    Navigator.of(context).pop();
+  
+    _mostrarDialogoCantidad({
+      'codigo':      codigo,
+      'descripcion': descripcion,
+      'manual':      true,
+    });
   }
-
-  InputDecoration _deco(String label, IconData icon) => InputDecoration(
-    labelText: label,
-    labelStyle: const TextStyle(color: Color(0xFF888888)),
-    prefixIcon: Icon(icon, color: const Color(0xFF29B6F6), size: 18),
-    filled: true,
-    fillColor: const Color(0xFF1A1A1A),
-    border: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: Color(0xFF242424)),
-    ),
-    enabledBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: Color(0xFF242424)),
-    ),
-    focusedBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: Color(0xFF29B6F6), width: 1.5),
-    ),
-  );
 
   Future<void> _confirmarTraspaso() async {
     final prov = context.read<TraspasoProvider>();
@@ -291,11 +336,6 @@ class _LineasScreenState extends State<LineasScreen> {
 
     return Scaffold(
       appBar: AppBar(title: const Text('Líneas de Traspaso')),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _mostrarDialogoManual,
-        icon: const Icon(Icons.edit_rounded, size: 18),
-        label: const Text('Manual', style: TextStyle(fontWeight: FontWeight.w700)),
-      ),
       body: Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
         child: Column(
@@ -304,35 +344,42 @@ class _LineasScreenState extends State<LineasScreen> {
             // ── Chips origen / destino ──────────────────────────
             Row(
               children: [
-                Expanded(child: _chip('Origen',  prov.origen?['usuario']  ?? '-', Icons.logout_rounded)),
+                Expanded(child: _chip('Origen',
+                    '${prov.origen?['almacen'] ?? '-'} · Stand ${prov.origen?['stand'] ?? '-'}',
+                    Icons.logout_rounded)),
                 const SizedBox(width: 8),
-                Expanded(child: _chip('Destino', prov.destino?['usuario'] ?? '-', Icons.login_rounded)),
+                Expanded(child: _chip('Destino',
+                    '${prov.destino?['almacen'] ?? '-'} · Stand ${prov.destino?['stand'] ?? '-'}',
+                    Icons.login_rounded)),
               ],
             ),
             const SizedBox(height: 14),
 
-            // ── Campo escaneo (invisible, solo captura) ─────────
+            // ── Campo escaneo ───────────────────────────────────
             CampoCodigo(
               controller: _codigo,
               focusNode:  _foco,
-              label: 'Escanea el código de barras...',
+              label: 'Escanea o escribe EAN / Referencia...',
               ocultable: false,
               onSubmitted: _escanear,
             ),
             const SizedBox(height: 10),
 
-            // ── Feedback último libro agregado ──────────────────
+            // ── Feedback último agregado ────────────────────────
             AnimatedSwitcher(
               duration: const Duration(milliseconds: 300),
               child: _ultimoAgregado != null
                   ? Container(
                       key: ValueKey(_ultimoAgregado),
                       width: double.infinity,
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 10),
                       decoration: BoxDecoration(
                         color: const Color(0xFF0D2E0D),
                         borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: const Color(0xFF43A047).withValues(alpha: 0.5)),
+                        border: Border.all(
+                            color: const Color(0xFF43A047)
+                                .withValues(alpha: 0.5)),
                       ),
                       child: Row(
                         children: [
@@ -342,7 +389,8 @@ class _LineasScreenState extends State<LineasScreen> {
                           Expanded(
                             child: Text(
                               _ultimoAgregado!,
-                              style: const TextStyle(color: Color(0xFF81C784), fontSize: 13),
+                              style: const TextStyle(
+                                  color: Color(0xFF81C784), fontSize: 13),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -352,17 +400,18 @@ class _LineasScreenState extends State<LineasScreen> {
                     )
                   : const SizedBox(key: ValueKey('empty'), height: 0),
             ),
-
             const SizedBox(height: 10),
 
-            // ── Total ───────────────────────────────────────────
+            // ── Totales ─────────────────────────────────────────
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 16, vertical: 10),
               decoration: BoxDecoration(
                 color: const Color(0xFF0D1B2A),
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFF1565C0).withValues(alpha: 0.4)),
+                border: Border.all(
+                    color: const Color(0xFF1565C0).withValues(alpha: 0.4)),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -378,15 +427,25 @@ class _LineasScreenState extends State<LineasScreen> {
                         const Icon(Icons.library_books_rounded,
                             color: Color(0xFF29B6F6), size: 18),
                       const SizedBox(width: 8),
-                      const Text('Total libros',
-                          style: TextStyle(color: Color(0xFF90CAF9), fontSize: 13)),
+                      Text(
+                        'Refs: ${prov.items.length}',
+                        style: const TextStyle(
+                            color: Color(0xFF90CAF9), fontSize: 13),
+                      ),
                     ],
                   ),
-                  Text('${prov.total}',
-                      style: const TextStyle(
-                          color: Color(0xFF29B6F6),
-                          fontWeight: FontWeight.w800,
-                          fontSize: 22)),
+                  Row(
+                    children: [
+                      const Text('Total: ',
+                          style: TextStyle(
+                              color: Color(0xFF90CAF9), fontSize: 13)),
+                      Text('${prov.total}',
+                          style: const TextStyle(
+                              color: Color(0xFF29B6F6),
+                              fontWeight: FontWeight.w800,
+                              fontSize: 22)),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -401,10 +460,12 @@ class _LineasScreenState extends State<LineasScreen> {
                         children: [
                           Icon(Icons.qr_code_scanner_rounded,
                               size: 56,
-                              color: const Color(0xFF1565C0).withValues(alpha: 0.4)),
+                              color: const Color(0xFF1565C0)
+                                  .withValues(alpha: 0.4)),
                           const SizedBox(height: 12),
                           const Text('Escanea un libro para comenzar',
-                              style: TextStyle(color: Color(0xFF555555), fontSize: 14)),
+                              style: TextStyle(
+                                  color: Color(0xFF555555), fontSize: 14)),
                         ],
                       ),
                     )
@@ -416,18 +477,22 @@ class _LineasScreenState extends State<LineasScreen> {
                         final item     = prov.items[i];
                         final esManual = item['manual'] == true;
                         return ListTile(
-                          contentPadding:
-                              const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
                           leading: Container(
                             width: 36, height: 36,
                             decoration: BoxDecoration(
                               color: esManual
-                                  ? const Color(0xFF4A1080).withValues(alpha: 0.25)
-                                  : const Color(0xFF0D47A1).withValues(alpha: 0.25),
+                                  ? const Color(0xFF4A1080)
+                                      .withValues(alpha: 0.25)
+                                  : const Color(0xFF0D47A1)
+                                      .withValues(alpha: 0.25),
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Icon(
-                              esManual ? Icons.edit_rounded : Icons.book_rounded,
+                              esManual
+                                  ? Icons.edit_rounded
+                                  : Icons.book_rounded,
                               color: esManual
                                   ? const Color(0xFFCE93D8)
                                   : const Color(0xFF29B6F6),
@@ -436,7 +501,8 @@ class _LineasScreenState extends State<LineasScreen> {
                           ),
                           title: Text(
                             item['descripcion'] ?? item['codigo'] ?? '-',
-                            style: const TextStyle(color: Colors.white, fontSize: 13),
+                            style: const TextStyle(
+                                color: Colors.white, fontSize: 13),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -444,19 +510,22 @@ class _LineasScreenState extends State<LineasScreen> {
                             children: [
                               Text(item['codigo'] ?? '',
                                   style: const TextStyle(
-                                      color: Color(0xFF888888), fontSize: 11)),
+                                      color: Color(0xFF888888),
+                                      fontSize: 11)),
                               if (esManual) ...[
                                 const SizedBox(width: 6),
                                 Container(
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 5, vertical: 1),
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFF4A1080).withValues(alpha: 0.35),
+                                    color: const Color(0xFF4A1080)
+                                        .withValues(alpha: 0.35),
                                     borderRadius: BorderRadius.circular(4),
                                   ),
-                                  child: const Text('manual',
+                                  child: const Text('nuevo',
                                       style: TextStyle(
-                                          color: Color(0xFFCE93D8), fontSize: 10)),
+                                          color: Color(0xFFCE93D8),
+                                          fontSize: 10)),
                                 ),
                               ],
                             ],
@@ -464,18 +533,36 @@ class _LineasScreenState extends State<LineasScreen> {
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 10, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF0D47A1).withValues(alpha: 0.3),
-                                  borderRadius: BorderRadius.circular(8),
+                              // Cantidad editable con tap
+                              GestureDetector(
+                                onTap: () =>
+                                    _editarCantidad(context, prov, i, item),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 10, vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF0D47A1)
+                                        .withValues(alpha: 0.3),
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                        color: const Color(0xFF1565C0)
+                                            .withValues(alpha: 0.4)),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text('x${item['cantidad']}',
+                                          style: const TextStyle(
+                                              color: Color(0xFF29B6F6),
+                                              fontWeight: FontWeight.w700,
+                                              fontSize: 13)),
+                                      const SizedBox(width: 4),
+                                      const Icon(Icons.edit_rounded,
+                                          size: 11,
+                                          color: Color(0xFF1565C0)),
+                                    ],
+                                  ),
                                 ),
-                                child: Text('x${item['cantidad']}',
-                                    style: const TextStyle(
-                                        color: Color(0xFF29B6F6),
-                                        fontWeight: FontWeight.w700,
-                                        fontSize: 13)),
                               ),
                               IconButton(
                                 icon: const Icon(Icons.delete_outline,
@@ -500,7 +587,8 @@ class _LineasScreenState extends State<LineasScreen> {
               child: ElevatedButton.icon(
                 icon: const Icon(Icons.check_circle_outline_rounded),
                 label: const Text('CONFIRMAR TRASPASO',
-                    style: TextStyle(fontWeight: FontWeight.w700, letterSpacing: 1)),
+                    style: TextStyle(
+                        fontWeight: FontWeight.w700, letterSpacing: 1)),
                 onPressed: _confirmarTraspaso,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF0D47A1),
@@ -513,6 +601,88 @@ class _LineasScreenState extends State<LineasScreen> {
         ),
       ),
     );
+  }
+
+  // ── Editar cantidad de un item ya agregado ─────────────────────
+  void _editarCantidad(
+      BuildContext context, TraspasoProvider prov, int i, Map item) {
+    final cantCtrl =
+        TextEditingController(text: '${item['cantidad']}');
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A1A),
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Editar cantidad',
+            style: TextStyle(fontSize: 15)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              item['descripcion'] ?? item['codigo'] ?? '-',
+              style: const TextStyle(
+                  color: Color(0xFF888888), fontSize: 12),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: cantCtrl,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 26,
+                  fontWeight: FontWeight.w700),
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                _MaxValueFormatter(99),
+              ],
+              decoration: InputDecoration(
+                filled: true,
+                fillColor: const Color(0xFF242424),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide.none,
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 14, vertical: 14),
+              ),
+              onSubmitted: (_) {
+                _aplicarCantidad(ctx, prov, i, cantCtrl);
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar',
+                style: TextStyle(color: Color(0xFF888888))),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1565C0),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () => _aplicarCantidad(ctx, prov, i, cantCtrl),
+            child: const Text('Guardar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _aplicarCantidad(BuildContext ctx, TraspasoProvider prov, int i,
+      TextEditingController cantCtrl) {
+    final cant = (int.tryParse(cantCtrl.text) ?? 1).clamp(1, 99);
+    prov.actualizarCantidad(i, cant);
+    Navigator.pop(ctx);
+    _foco.requestFocus();
   }
 
   Widget _chip(String label, String value, IconData icon) {
@@ -532,10 +702,13 @@ class _LineasScreenState extends State<LineasScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(label,
-                    style: const TextStyle(color: Color(0xFF888888), fontSize: 10)),
+                    style: const TextStyle(
+                        color: Color(0xFF888888), fontSize: 10)),
                 Text(value,
                     style: const TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12),
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12),
                     overflow: TextOverflow.ellipsis),
               ],
             ),
@@ -543,5 +716,22 @@ class _LineasScreenState extends State<LineasScreen> {
         ],
       ),
     );
+  }
+}
+
+// ── Formatter: limita valor máximo a 99 ───────────────────────────
+class _MaxValueFormatter extends TextInputFormatter {
+  final int max;
+  _MaxValueFormatter(this.max);
+
+  @override
+  TextEditingValue formatEditUpdate(
+      TextEditingValue oldValue, TextEditingValue newValue) {
+    if (newValue.text.isEmpty) return newValue;
+    final val = int.tryParse(newValue.text) ?? 0;
+    if (val > max) {
+      return oldValue;
+    }
+    return newValue;
   }
 }
