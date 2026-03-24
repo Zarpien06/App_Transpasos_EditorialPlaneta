@@ -1,8 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../core/kiosk_service.dart';
 import 'dashboard_screen.dart';
 
 class LoginScreen extends StatelessWidget {
   const LoginScreen({super.key});
+
+  void _onIngresar(BuildContext context) {
+    // Activa el modo kiosco en toda la app
+    context.read<KioskService>().activate();
+
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => const DashboardScreen()),
+      (route) => false,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -35,12 +48,9 @@ class LoginScreen extends StatelessWidget {
                     ],
                   ),
                   child: ClipOval(
-                    child: Padding(
-                      padding: const EdgeInsets.all(0),
-                      child: Image.asset(
-                        'assets/img/icon-planet.png',
-                        fit: BoxFit.contain,
-                      ),
+                    child: Image.asset(
+                      'assets/img/icon-planet.png',
+                      fit: BoxFit.contain,
                     ),
                   ),
                 ),
@@ -62,12 +72,7 @@ class LoginScreen extends StatelessWidget {
                   child: SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
-                      onPressed: () => Navigator.pushAndRemoveUntil(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => const DashboardScreen()),
-                        (route) => false,
-                      ),
+                      onPressed: () => _onIngresar(context),
                       style: ElevatedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 20),
                         backgroundColor: const Color(0xFF1565C0),

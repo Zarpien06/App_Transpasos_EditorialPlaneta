@@ -9,6 +9,10 @@ import 'dashboard_screen.dart';
 
 const int kNumDispositivo = 1;
 
+// Anchos de columna PDF (rollo 80mm, márgenes 4mm c/lado → útil ~72mm)
+const double colRef  = 30 * PdfPageFormat.mm;
+const double colCant = 10 * PdfPageFormat.mm;
+
 class FacturaScreen extends StatelessWidget {
   const FacturaScreen({super.key});
 
@@ -18,15 +22,31 @@ class FacturaScreen extends StatelessWidget {
     final logoImage = await imageFromAssetBundle(
         'assets/img/icon-planeta-removebg-preview.png');
 
+    // Fuente con soporte Unicode completo (tildes, ñ, etc.)
+    // Evita el warning "Helvetica has no Unicode support"
+    final ttf = await PdfGoogleFonts.notoSansRegular();
+    final ttfBold = await PdfGoogleFonts.notoSansBold();
+
+    // ── Alto con factor x3 para garantizar que los totales siempre aparezcan ──
+    // headerMm : cabecera fija
+    // itemMm   : por ítem (22mm → cubre descripciones largas de 2-3 líneas)
+    // footerMm : totales + espacio al final
+    // Factor x3 : margen enorme, el papel sobrante no importa en rollo térmico
+    const double headerMm = 130.0;
+    const double itemMm   =  22.0;
+    const double footerMm =  80.0;
+    final double totalMm  = (headerMm + (prov.items.length * itemMm) + footerMm) * 3.0;
+    final double pageHeight = totalMm * PdfPageFormat.mm;
+
     pdf.addPage(
       pw.Page(
-        pageFormat: const PdfPageFormat(
-          60 * PdfPageFormat.mm,
-          double.infinity,
-          marginLeft:   4 * PdfPageFormat.mm,
-          marginRight:  4 * PdfPageFormat.mm,
-          marginTop:    12 * PdfPageFormat.mm, // ← más margen arriba
-          marginBottom: 20 * PdfPageFormat.mm, // ← más margen abajo
+        pageFormat: PdfPageFormat(
+          80 * PdfPageFormat.mm,
+          pageHeight,
+          marginLeft:   4  * PdfPageFormat.mm,
+          marginRight:  4  * PdfPageFormat.mm,
+          marginTop:    12 * PdfPageFormat.mm,
+          marginBottom: 12 * PdfPageFormat.mm,
         ),
         build: (_) => pw.Column(
           crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -42,11 +62,9 @@ class FacturaScreen extends StatelessWidget {
                   crossAxisAlignment: pw.CrossAxisAlignment.start,
                   children: [
                     pw.Text('EDITORIAL PLANETA',
-                        style: pw.TextStyle(
-                            fontSize: 9, fontWeight: pw.FontWeight.bold)),
+                        style: pw.TextStyle(font: ttfBold, fontSize: 14)),
                     pw.Text('COLOMBIANA S.A.',
-                        style: pw.TextStyle(
-                            fontSize: 9, fontWeight: pw.FontWeight.bold)),
+                        style: pw.TextStyle(font: ttfBold, fontSize: 14)),
                   ],
                 ),
               ],
@@ -58,8 +76,7 @@ class FacturaScreen extends StatelessWidget {
             pw.Center(
               child: pw.Text(
                 'Dispositivo $kNumDispositivo  |  Mov. #${prov.numeroMovimiento ?? '-'}',
-                style: pw.TextStyle(
-                    fontSize: 8, fontWeight: pw.FontWeight.bold),
+                style: pw.TextStyle(font: ttfBold, fontSize: 13),
               ),
             ),
             pw.SizedBox(height: 4),
@@ -68,8 +85,8 @@ class FacturaScreen extends StatelessWidget {
             pw.Row(
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
-                pw.Text('Fecha: $fecha', style: pw.TextStyle(fontSize: 8)),
-                pw.Text('Hora: $hora',   style: pw.TextStyle(fontSize: 8)),
+                pw.Text('Fecha: $fecha', style: pw.TextStyle(font: ttf, fontSize: 12)),
+                pw.Text('Hora: $hora',   style: pw.TextStyle(font: ttf, fontSize: 12)),
               ],
             ),
             pw.SizedBox(height: 5),
@@ -78,8 +95,7 @@ class FacturaScreen extends StatelessWidget {
             // ── Título ──
             pw.Center(
               child: pw.Text('TRASPASOS',
-                  style: pw.TextStyle(
-                      fontSize: 11, fontWeight: pw.FontWeight.bold)),
+                  style: pw.TextStyle(font: ttfBold, fontSize: 16)),
             ),
             pw.SizedBox(height: 5),
             pw.Divider(thickness: 0.5),
@@ -87,85 +103,89 @@ class FacturaScreen extends StatelessWidget {
             // ── Desde / Hasta ──
             pw.Text(
               'Desde: ${prov.origen?['almacen'] ?? '-'}  Stand: ${prov.origen?['stand'] ?? '-'}',
-              style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold),
+              style: pw.TextStyle(font: ttfBold, fontSize: 12),
             ),
             pw.SizedBox(height: 3),
             pw.Text(
               'Hasta: ${prov.destino?['almacen'] ?? '-'}  Stand: ${prov.destino?['stand'] ?? '-'}',
-              style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold),
+              style: pw.TextStyle(font: ttfBold, fontSize: 12),
             ),
             pw.SizedBox(height: 5),
-            pw.Divider(thickness: 0.5),
+            pw.Divider(thickness: 1),
 
             // ── Tabla header ──
             pw.Row(
               children: [
                 pw.SizedBox(
-                  width: 24 * PdfPageFormat.mm,
-                  child: pw.Text('Ref',
-                      style: pw.TextStyle(
-                          fontSize: 8, fontWeight: pw.FontWeight.bold)),
+                  width: colRef,
+                  child: pw.Text('Referencia',
+                      style: pw.TextStyle(font: ttfBold, fontSize: 11)),
                 ),
                 pw.Expanded(
-                  child: pw.Text('Descripción',
-                      style: pw.TextStyle(
-                          fontSize: 8, fontWeight: pw.FontWeight.bold)),
+                  child: pw.Text('Descripcion',
+                      style: pw.TextStyle(font: ttfBold, fontSize: 11)),
                 ),
                 pw.SizedBox(
-                  width: 8 * PdfPageFormat.mm,
+                  width: colCant,
                   child: pw.Text('Cant',
                       textAlign: pw.TextAlign.right,
-                      style: pw.TextStyle(
-                          fontSize: 8, fontWeight: pw.FontWeight.bold)),
+                      style: pw.TextStyle(font: ttfBold, fontSize: 11)),
                 ),
               ],
             ),
-            pw.Divider(thickness: 0.5),
+            pw.Divider(thickness: 1),
 
             // ── Items ──
             ...prov.items.map((item) => pw.Padding(
-              padding: const pw.EdgeInsets.symmetric(vertical: 3),
+              padding: const pw.EdgeInsets.symmetric(vertical: 5),
               child: pw.Row(
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
                   pw.SizedBox(
-                    width: 24 * PdfPageFormat.mm,
-                    child: pw.Text(item['codigo'] ?? '',
-                        style: pw.TextStyle(fontSize: 8)),
+                    width: colRef,
+                    child: pw.Text(
+                      item['codigo'] ?? '',
+                      style: pw.TextStyle(font: ttf, fontSize: 11),
+                      softWrap: true,
+                    ),
                   ),
                   pw.Expanded(
-                    child: pw.Text(item['descripcion'] ?? '',
-                        style: pw.TextStyle(fontSize: 8), maxLines: 3),
+                    child: pw.Text(
+                      item['descripcion'] ?? '',
+                      style: pw.TextStyle(font: ttf, fontSize: 10),
+                      softWrap: true,
+                    ),
                   ),
                   pw.SizedBox(
-                    width: 8 * PdfPageFormat.mm,
-                    child: pw.Text('${item['cantidad']}',
-                        textAlign: pw.TextAlign.right,
-                        style: pw.TextStyle(fontSize: 8)),
+                    width: colCant,
+                    child: pw.Text(
+                      '${item['cantidad']}',
+                      textAlign: pw.TextAlign.right,
+                      style: pw.TextStyle(font: ttf, fontSize: 11),
+                    ),
                   ),
                 ],
               ),
             )),
 
-            pw.SizedBox(height: 4),
-            pw.Divider(thickness: 0.5),
-            pw.SizedBox(height: 4),
-
             // ── Totales ──
+            pw.SizedBox(height: 10),
+            pw.Divider(thickness: 1),
+            pw.SizedBox(height: 6),
             pw.Row(
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
-                pw.Text('Referencias: ${prov.items.length}',
-                    style: pw.TextStyle(
-                        fontSize: 9, fontWeight: pw.FontWeight.bold)),
-                pw.Text('Total: ${prov.total}',
-                    style: pw.TextStyle(
-                        fontSize: 9, fontWeight: pw.FontWeight.bold)),
+                pw.Text(
+                  'Referencias: ${prov.items.length}',
+                  style: pw.TextStyle(font: ttfBold, fontSize: 13),
+                ),
+                pw.Text(
+                  'Total: ${prov.total}',
+                  style: pw.TextStyle(font: ttfBold, fontSize: 13),
+                ),
               ],
             ),
-
-            // ── Espacio final generoso para que la impresora alcance ──
-            pw.SizedBox(height: 24),
+            pw.SizedBox(height: 40),
           ],
         ),
       ),
@@ -173,7 +193,6 @@ class FacturaScreen extends StatelessWidget {
 
     await Printing.layoutPdf(onLayout: (_) => pdf.save());
 
-    // ── Alerta post-impresión ──
     if (context.mounted) {
       _mostrarAlertaExito(context, prov);
     }
@@ -218,7 +237,6 @@ class FacturaScreen extends StatelessWidget {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 20),
-            // Botón nuevo traspaso
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
@@ -245,7 +263,6 @@ class FacturaScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 10),
-            // Botón volver al inicio discreto
             TextButton(
               onPressed: () {
                 prov.limpiar();
@@ -280,7 +297,6 @@ class FacturaScreen extends StatelessWidget {
         child: Column(
           children: [
 
-            // ── Preview ──────────────────────────────────────────
             Expanded(
               child: Container(
                 padding: const EdgeInsets.symmetric(
@@ -301,7 +317,6 @@ class FacturaScreen extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
 
-                      // Logo + empresa
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
@@ -329,7 +344,6 @@ class FacturaScreen extends StatelessWidget {
                       const SizedBox(height: 8),
                       const Divider(color: Colors.black26),
 
-                      // Dispositivo
                       Center(
                         child: Text(
                           'Dispositivo $kNumDispositivo  |  Mov. #${prov.numeroMovimiento ?? '-'}',
@@ -341,7 +355,6 @@ class FacturaScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 6),
 
-                      // Fecha
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -356,7 +369,6 @@ class FacturaScreen extends StatelessWidget {
                       const SizedBox(height: 6),
                       const Divider(color: Colors.black26),
 
-                      // Título
                       const Center(
                         child: Text('TRASPASOS',
                             style: TextStyle(
@@ -367,44 +379,39 @@ class FacturaScreen extends StatelessWidget {
                       const SizedBox(height: 6),
                       const Divider(color: Colors.black26),
 
-                      // Desde / Hasta
                       RichText(
                         text: TextSpan(
-                          style: const TextStyle(
-                              fontSize: 10, color: Colors.black87),
+                          style: const TextStyle(fontSize: 10, color: Colors.black87),
                           children: [
                             const TextSpan(
                                 text: 'Desde: ',
                                 style: TextStyle(fontWeight: FontWeight.bold)),
                             TextSpan(
-                                text:
-                                    '${prov.origen?['almacen'] ?? '-'}  Stand: ${prov.origen?['stand'] ?? '-'}'),
+                                text: '${prov.origen?['almacen'] ?? '-'}  Stand: ${prov.origen?['stand'] ?? '-'}'),
                           ],
                         ),
                       ),
                       const SizedBox(height: 4),
                       RichText(
                         text: TextSpan(
-                          style: const TextStyle(
-                              fontSize: 10, color: Colors.black87),
+                          style: const TextStyle(fontSize: 10, color: Colors.black87),
                           children: [
                             const TextSpan(
                                 text: 'Hasta: ',
                                 style: TextStyle(fontWeight: FontWeight.bold)),
                             TextSpan(
-                                text:
-                                    '${prov.destino?['almacen'] ?? '-'}  Stand: ${prov.destino?['stand'] ?? '-'}'),
+                                text: '${prov.destino?['almacen'] ?? '-'}  Stand: ${prov.destino?['stand'] ?? '-'}'),
                           ],
                         ),
                       ),
-                      const Divider(color: Colors.black26),
+                      const SizedBox(height: 6),
+                      const Divider(color: Colors.black87, thickness: 1),
 
-                      // Tabla header
                       const Row(
                         children: [
                           SizedBox(
-                            width: 100,
-                            child: Text('Ref',
+                            width: 110,
+                            child: Text('Referencia',
                                 style: TextStyle(
                                     fontWeight: FontWeight.bold,
                                     fontSize: 10,
@@ -424,38 +431,41 @@ class FacturaScreen extends StatelessWidget {
                                   color: Colors.black)),
                         ],
                       ),
-                      const Divider(color: Colors.black26),
+                      const Divider(color: Colors.black87, thickness: 1),
 
-                      // Items
                       ...prov.items.map((item) => Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        padding: const EdgeInsets.symmetric(vertical: 5),
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             SizedBox(
-                              width: 100,
-                              child: Text(item['codigo'] ?? '',
-                                  style: const TextStyle(
-                                      fontSize: 10,
-                                      color: Colors.black87)),
+                              width: 110,
+                              child: Text(
+                                item['codigo'] ?? '',
+                                style: const TextStyle(
+                                    fontSize: 10, color: Colors.black87),
+                                softWrap: true,
+                              ),
                             ),
                             Expanded(
-                              child: Text(item['descripcion'] ?? '',
-                                  style: const TextStyle(
-                                      fontSize: 10,
-                                      color: Colors.black87)),
+                              child: Text(
+                                item['descripcion'] ?? '',
+                                style: const TextStyle(
+                                    fontSize: 10, color: Colors.black87),
+                                softWrap: true,
+                              ),
                             ),
                             Text('${item['cantidad']}',
                                 style: const TextStyle(
-                                    fontSize: 10,
-                                    color: Colors.black87)),
+                                    fontSize: 10, color: Colors.black87)),
                           ],
                         ),
                       )),
 
-                      const Divider(color: Colors.black26),
+                      const SizedBox(height: 6),
+                      const Divider(color: Colors.black87, thickness: 1),
+                      const SizedBox(height: 4),
 
-                      // Totales
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -480,7 +490,6 @@ class FacturaScreen extends StatelessWidget {
 
             const SizedBox(height: 16),
 
-            // ── Botones ──────────────────────────────────────────
             Row(
               children: [
                 Expanded(

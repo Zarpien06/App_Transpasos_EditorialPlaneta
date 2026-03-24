@@ -12,21 +12,35 @@ dependencies:
     sdk: flutter
   http: ^1.2.0
   provider: ^6.0.5
+  kiosk_mode: ^0.8.0
   mobile_scanner: ^3.5.6
   awesome_dialog: ^3.2.1
   pdf: ^3.10.7
   printing: ^5.12.0
   intl: ^0.18.1
+  flutter_native_splash: ^2.4.1  # 👈 AQUÍ VA
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.13.1
+  patch_package: ^0.0.8
+
+flutter_native_splash:
+  color: "#0A0F1E"
+  image: assets/img/icon-planeta.png
+  color_dark: "#0A0F1E"
+  image_dark: assets/img/icon-planeta.png
+  android_12:
+    color: "#0A0F1E"
+    image: assets/img/icon-planeta.png
+    icon_background_color: "#0A0F1E"
 
 flutter_launcher_icons:
   android: true
   ios: true
+  remove_alpha_ios: true
   image_path: "assets/img/icon-planeta.png"
 
 flutter:
