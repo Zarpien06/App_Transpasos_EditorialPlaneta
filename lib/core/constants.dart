@@ -1,0 +1,1 @@
+const int kMaxTotal = 100;

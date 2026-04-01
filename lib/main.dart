@@ -1,51 +1,59 @@
+// lib/main.dart
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:provider/provider.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import 'core/theme.dart';
 import 'core/kiosk_service.dart';
-import 'providers/traspaso_provider.dart';
+import 'core/pdf_fonts.dart';
+import 'core/connectivity_service.dart';
+import 'core/device_service.dart';
+import 'services/sync_service.dart';
 import 'screens/login_screen.dart';
+import 'screens/init_screen.dart';
 import 'widgets/kiosk_wrapper.dart';
-
-void main() {
-  final binding = WidgetsFlutterBinding.ensureInitialized();
-  FlutterNativeSplash.preserve(widgetsBinding: binding);
-
-  SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-  ]);
-
-  runApp(
-    MultiProvider(
-      providers: [
-        ChangeNotifierProvider(create: (_) => TraspasoProvider()),
-        ChangeNotifierProvider(create: (_) => KioskService()),
-      ],
-      child: const MyApp(),
-    ),
-  );
-}
 
 final navigatorKey = GlobalKey<NavigatorState>();
 
-class MyApp extends StatefulWidget {
-  const MyApp({super.key});
+Future<void> main() async {
+  final binding = WidgetsFlutterBinding.ensureInitialized();
+  FlutterNativeSplash.preserve(widgetsBinding: binding);
 
-  @override
-  State<MyApp> createState() => _MyAppState();
+  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  await Future.wait([
+    PdfFonts.load(),
+    ConnectivityService().init(),
+  ]);
+
+  final inicializado = await DeviceService().estaInicializado();
+
+  runApp(ProviderScope(child: MyApp(inicializado: inicializado)));
 }
 
-class _MyAppState extends State<MyApp> {
+final kioskProvider = ChangeNotifierProvider<KioskService>((ref) {
+  return KioskService();
+});
+
+class MyApp extends ConsumerStatefulWidget {
+  final bool inicializado;
+  const MyApp({super.key, required this.inicializado});
+
+  @override
+  ConsumerState<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends ConsumerState<MyApp> {
   @override
   void initState() {
     super.initState();
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final kiosk = context.read<KioskService>();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final kiosk = ref.read(kioskProvider);
 
-      kiosk.activate();
-
+      // ✅ PRIMERO asignar onTimeout, LUEGO restaurar estado
+      // Así si el kiosko estaba activo, el timer ya tiene su callback
       kiosk.onTimeout = () {
         navigatorKey.currentState?.pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const LoginScreen()),
@@ -53,20 +61,26 @@ class _MyAppState extends State<MyApp> {
         );
       };
 
-      FlutterNativeSplash.remove();
+      try {
+        await kiosk.cargarEstadoPersistido(); // ← ahora onTimeout ya existe
+        await SyncService.sincronizarCompleto();
+      } catch (e) {
+        debugPrint('Error inicialización: $e');
+      } finally {
+        FlutterNativeSplash.remove();
+      }
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    return KioskWrapper(          
-      child: MaterialApp(
-        title: 'Traspasos Planeta',
-        theme: appTheme,
-        debugShowCheckedModeBanner: false,
-        navigatorKey: navigatorKey,
-        home: const LoginScreen(),
-      ),
+    return MaterialApp(
+      title: 'Traspasos Planeta',
+      debugShowCheckedModeBanner: false,
+      navigatorKey: navigatorKey,
+      theme: appTheme,
+      builder: (context, child) => KioskWrapper(child: child!),
+      home: widget.inicializado ? const LoginScreen() : const InitScreen(),
     );
   }
 }

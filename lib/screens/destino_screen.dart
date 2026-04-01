@@ -1,18 +1,24 @@
-﻿import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+﻿// lib/screens/destino_screen.dart
+// ─────────────────────────────────────────────────────────────────────────────
+
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../providers/traspaso_provider.dart';
 import '../services/api_service.dart';
 import '../widgets/campo_codigo.dart';
 import '../widgets/alerts.dart';
 import 'lineas_screen.dart';
+import '../main.dart'; // Para acceder a kioskProvider
 
-class DestinoScreen extends StatefulWidget {
+class DestinoScreen extends ConsumerStatefulWidget {
   const DestinoScreen({super.key});
+
   @override
-  State<DestinoScreen> createState() => _DestinoScreenState();
+  ConsumerState<DestinoScreen> createState() => _DestinoScreenState();
 }
 
-class _DestinoScreenState extends State<DestinoScreen> {
+class _DestinoScreenState extends ConsumerState<DestinoScreen> {
   final _clave = TextEditingController();
   bool _loading = false;
 
@@ -22,8 +28,16 @@ class _DestinoScreenState extends State<DestinoScreen> {
     super.dispose();
   }
 
-  String _limpiarCodigo(String code) => code.replaceAll(']C1', '').trim();
+  // 🔹 LIMPIEZA
+  String _limpiarCodigo(String code) {
+    return code
+        .replaceAll(']C1', '')
+        .replaceAll(']E0', '')
+        .replaceAll(']Q', '')
+        .trim();
+  }
 
+  // 🔹 CARD INFO
   Widget _infoCard(String titulo, Map<String, dynamic> data) {
     return Container(
       width: double.infinity,
@@ -32,24 +46,37 @@ class _DestinoScreenState extends State<DestinoScreen> {
         color: const Color(0xFF0D1B2A),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-            color: const Color(0xFF1565C0).withValues(alpha: 0.5)),
+          color: const Color(0xFF1565C0)..withValues(alpha: 0.5),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(titulo,
-              style: const TextStyle(
-                  color: Color(0xFF42A5F5), fontWeight: FontWeight.bold)),
+          Text(
+            titulo,
+            style: const TextStyle(
+              color: Color(0xFF42A5F5),
+              fontWeight: FontWeight.bold,
+            ),
+          ),
           const SizedBox(height: 8),
-          Text('🏪 Almacén: ${data['almacen'] ?? '-'}',
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-          Text('📍 Stand: ${data['stand'] ?? '-'}',
-              style: const TextStyle(color: Color(0xFFB0BEC5))),
+          Text(
+            '🏪 Almacén: ${data['almacen'] ?? '-'}',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          Text(
+            '📍 Stand: ${data['stand'] ?? '-'}',
+            style: const TextStyle(color: Color(0xFFB0BEC5)),
+          ),
         ],
       ),
     );
   }
 
+  // 🔹 VALIDACIÓN
   Future<void> _validar() async {
     final claveLimpia = _limpiarCodigo(_clave.text);
 
@@ -58,6 +85,8 @@ class _DestinoScreenState extends State<DestinoScreen> {
       return;
     }
 
+    ref.read(kioskProvider).registerActivity();
+
     setState(() => _loading = true);
 
     try {
@@ -65,35 +94,49 @@ class _DestinoScreenState extends State<DestinoScreen> {
       if (!mounted) return;
 
       if (res['status'] == 'ok') {
-        final prov   = context.read<TraspasoProvider>();
-        final data   = res['data'] as Map<String, dynamic>;
-        final origen = prov.origen;
+        final state = ref.read(traspasoProvider);
+        final data = res['data'] as Map<String, dynamic>;
+        final origen = state.origen;
 
-        // ── Mismo stand = no permitido ──────────────────────────
         if (origen != null && data['stand'] == origen['stand']) {
-          alertaError(context,
-              'El destino debe ser un stand diferente al origen');
+          alertaError(
+            context,
+            'El destino debe ser un stand diferente al origen',
+          );
           _clave.clear();
-          setState(() => _loading = false);
           return;
         }
 
-        prov.setDestino(data);
-        setState(() {});
+        // ✅ CORREGIDO: Acceder al notifier
+        ref.read(traspasoProvider.notifier).setDestino(data);
       } else {
         alertaError(context, res['mensaje'] ?? 'Error desconocido');
       }
     } catch (e) {
       if (!mounted) return;
       alertaError(context, 'Error de conexión');
+      debugPrint('Error validación destino: $e');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
+  // 🔹 CANCELAR
+  void _cancelar() {
+    alertaConfirmar(
+      context,
+      '¿Seguro que deseas cancelar?',
+      () {
+        // ✅ CORREGIDO: Acceder al notifier
+        ref.read(traspasoProvider.notifier).limpiar();
+        Navigator.popUntil(context, (r) => r.isFirst);
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final prov        = context.watch<TraspasoProvider>();
+    final prov = ref.watch(traspasoProvider);
     final destinoListo = prov.destino != null;
 
     return Scaffold(
@@ -103,75 +146,83 @@ class _DestinoScreenState extends State<DestinoScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-
-            // ── Card origen ─────────────────────────────────────
+            // 🔹 ORIGEN
             if (prov.origen != null) _infoCard('Origen', prov.origen!),
             const SizedBox(height: 24),
 
-            // ── Campo + botón — solo si destino no está listo ───
+            // 🔹 FORM
             if (!destinoListo) ...[
               const Icon(Icons.person_search_rounded,
                   size: 48, color: Color(0xFF42A5F5)),
+
               const SizedBox(height: 8),
+
               const Text(
                 'Escanea el usuario destino',
                 style: TextStyle(color: Color(0xFF90CAF9)),
                 textAlign: TextAlign.center,
               ),
+
               const SizedBox(height: 20),
+
               CampoCodigo(
                 controller: _clave,
                 label: 'Clave Secreta (código de barras)',
                 ocultable: true,
                 onSubmitted: (_) => _validar(),
               ),
+
               const SizedBox(height: 20),
-              if (_loading)
-                const Center(child: CircularProgressIndicator())
-              else
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.send_rounded),
-                  label: const Text('ENVIAR'),
-                  onPressed: _validar,
-                ),
+
+              SizedBox(
+                height: 55,
+                child: _loading
+                    ? const Center(child: CircularProgressIndicator())
+                    : ElevatedButton.icon(
+                        icon: const Icon(Icons.send_rounded),
+                        label: const Text('ENVIAR'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF42A5F5),
+                          foregroundColor: Colors.white,
+                        ),
+                        onPressed: _validar,
+                      ),
+              ),
             ],
 
-            // ── Card destino — cuando ya está listo ─────────────
+            // 🔹 DESTINO OK
             if (destinoListo) ...[
               _infoCard('Destino', prov.destino!),
               const SizedBox(height: 24),
 
-              // Botones cancelar / continuar
               Row(
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
                       icon: const Icon(Icons.cancel_outlined,
                           color: Colors.redAccent),
-                      label: const Text('Cancelar',
-                          style: TextStyle(color: Colors.redAccent)),
-                      onPressed: () => alertaConfirmar(
-                        context,
-                        '¿Seguro que deseas cancelar?',
-                        () {
-                          prov.limpiar();
-                          Navigator.popUntil(context, (r) => r.isFirst);
-                        },
+                      label: const Text(
+                        'Cancelar',
+                        style: TextStyle(color: Colors.redAccent),
                       ),
-                      style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: Colors.redAccent),
-                      ),
+                      onPressed: _cancelar,
                     ),
                   ),
-                  const SizedBox(width: 5),
+
+                  const SizedBox(width: 12),
+
                   Expanded(
                     child: ElevatedButton.icon(
                       icon: const Icon(Icons.arrow_forward_rounded),
                       label: const Text('Continuar'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1565C0),
+                      ),
                       onPressed: () => Navigator.push(
                         context,
                         MaterialPageRoute(
-                            builder: (_) => const LineasScreen()),
+                          builder: (_) => const LineasScreen(),
+                        ),
                       ),
                     ),
                   ),

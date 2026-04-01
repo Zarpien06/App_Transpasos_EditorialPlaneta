@@ -1,88 +1,79 @@
+// lib/core/kiosk_service.dart
+// 100% LOCAL — sin ninguna llamada al servidor
+
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:kiosk_mode/kiosk_mode.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class KioskService extends ChangeNotifier {
-  static const String _pin = '1234';
+  static const String _pin      = 'sistemas';
   static const Duration _timeout = Duration(minutes: 5);
+  static const String _prefKey  = 'kiosko_activo';
 
-  // ── Estado kiosco ──
-  bool _isKioskActive = false;
+  bool   _isKioskActive = false;
   Timer? _timeoutTimer;
-  bool get isKioskActive => _isKioskActive;
   void Function()? onTimeout;
 
-  // ── Tap secreto (vive en el service, no en el widget) ──
-  int _tapCount = 0;
-  DateTime? _firstTap;
-  static const int _tapsRequired = 5;
-  static const Duration _tapWindow = Duration(seconds: 4);
-  void Function()? onSecretTapsDetected; // callback → muestra el PIN dialog
+  bool get isKioskActive => _isKioskActive;
 
-  /// Llama esto en cada tap de la zona secreta
-  void registerSecretTap() {
-    if (!_isKioskActive) return;
-    final now = DateTime.now();
-    if (_firstTap == null || now.difference(_firstTap!) > _tapWindow) {
-      _firstTap = now;
-      _tapCount = 1;
-    } else {
-      _tapCount++;
-    }
-    debugPrint('Tap secreto: $_tapCount/$_tapsRequired');
-    if (_tapCount >= _tapsRequired) {
-      _tapCount = 0;
-      _firstTap = null;
-      onSecretTapsDetected?.call();
-    }
+  // ── INIT: cargar estado guardado localmente ────────────────
+  Future<void> cargarEstadoPersistido() async {
+    final prefs = await SharedPreferences.getInstance();
+    final debeEstarActivo = prefs.getBool(_prefKey) ?? false;
+    if (debeEstarActivo) await _activarInterno();
   }
 
+  Future<void> _persistir(bool activo) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_prefKey, activo);
+  }
+
+  // ── ACTIVAR ────────────────────────────────────────────────
   Future<void> activate() async {
+    await _activarInterno();
+  }
+
+  Future<void> _activarInterno() async {
     _isKioskActive = true;
-    _tapCount = 0;
-    _firstTap = null;
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-    try {
-      await startKioskMode();
-    } catch (e) {
-      debugPrint('No se pudo activar kiosco real: $e');
-    }
+    await _persistir(true);
+
+    await SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.immersiveSticky,
+    );
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+    ]);
+
     _resetTimer();
     notifyListeners();
   }
 
+  // ── DESACTIVAR CON PIN ─────────────────────────────────────
   Future<bool> deactivate(String pin) async {
-    if (pin == _pin) {
-      _isKioskActive = false;
-      _tapCount = 0;
-      _firstTap = null;
-      _timeoutTimer?.cancel();
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-      SystemChrome.setPreferredOrientations(DeviceOrientation.values);
-      try {
-        await stopKioskMode();
-      } catch (e) {
-        debugPrint('No se pudo salir del kiosco real: $e');
-      }
-      notifyListeners();
-      return true;
-    }
-    return false;
+    if (pin != _pin) return false;
+    await _desactivarInterno();
+    return true;
   }
 
-  void forceDeactivate() {
+  // ── FORZAR DESACTIVACIÓN (botón admin) ────────────────────
+  Future<void> forceDeactivate() async {
+    await _desactivarInterno();
+  }
+
+  Future<void> _desactivarInterno() async {
     _isKioskActive = false;
-    _tapCount = 0;
-    _firstTap = null;
+    await _persistir(false);
     _timeoutTimer?.cancel();
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    SystemChrome.setPreferredOrientations(DeviceOrientation.values);
-    try { stopKioskMode(); } catch (_) {}
+    _timeoutTimer = null;
+
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    await SystemChrome.setPreferredOrientations(DeviceOrientation.values);
+
     notifyListeners();
   }
 
+  // ── INACTIVIDAD ────────────────────────────────────────────
   void registerActivity() {
     if (_isKioskActive) _resetTimer();
   }

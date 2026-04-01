@@ -1,50 +1,101 @@
 name: traspasos_planeta
-description: "A new Flutter project."
+description: "App Editorial Planeta para traspasos de stock entre sucursales."
 publish_to: 'none'
-
 version: 1.0.0+1
 
 environment:
-  sdk: ^3.11.3
+  sdk: ^3.3.0
 
 dependencies:
   flutter:
     sdk: flutter
-  http: ^1.2.0
-  provider: ^6.0.5
-  kiosk_mode: ^0.8.0
-  mobile_scanner: ^3.5.6
+
+  # 🔥 Estado (mejor que provider)
+  flutter_riverpod: ^2.5.1
+
+  # 🌐 Red PRO (mejor que http)
+  dio: ^5.4.0
+  retry: ^3.1.2
+
+  # 💾 Almacenamiento local
+  shared_preferences: ^2.5.3
+  sqflite: ^2.4.2
+  path: ^1.9.1
+
+  # 📡 Conectividad inteligente
+  connectivity_plus: ^6.1.5
+  internet_connection_checker_plus: ^2.7.2
+
+  # 📅 Fechas
+  intl: ^0.20.2
+
+  # 🔐 Seguridad básica
+  crypto: ^3.0.6
+
+  # 📱 Scanner (ACTUALIZADO)
+  mobile_scanner: ^6.0.7
+
+  # 🎨 UI PRO
   awesome_dialog: ^3.2.1
-  pdf: ^3.10.7
-  printing: ^5.12.0
-  intl: ^0.18.1
-  flutter_native_splash: ^2.4.1  # 👈 AQUÍ VA
+  shimmer: ^3.0.0
+  flutter_spinkit: ^5.2.1
+
+  # 📄 PDF
+  pdf: ^3.10.8
+  printing: ^5.13.0
+
+  # 🔋 Mantener pantalla activa (POS)
+  wakelock_plus: ^1.4.0
+
+  # 📱 Info de la app
+  package_info_plus: ^9.0.0
+
+  # 🧠 Modo kiosco
+  kiosk_mode: ^0.8.0
+
+  # 🚀 Splash
+  flutter_native_splash: ^2.4.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
-  flutter_launcher_icons: ^0.13.1
-  patch_package: ^0.0.8
+  flutter_launcher_icons: ^0.14.3
 
+# ─────────────────────────────────────────────
+# 🚀 SPLASH SCREEN (OPTIMIZADO)
+# ─────────────────────────────────────────────
 flutter_native_splash:
-  color: "#0A0F1E"
-  image: assets/img/icon-planeta.png
-  color_dark: "#0A0F1E"
-  image_dark: assets/img/icon-planeta.png
-  android_12:
-    color: "#0A0F1E"
-    image: assets/img/icon-planeta.png
-    icon_background_color: "#0A0F1E"
+  color: "#FFFFFF"
+  color_dark: "#121212"
 
-flutter_launcher_icons:
   android: true
   ios: true
-  remove_alpha_ios: true
-  image_path: "assets/img/icon-planeta.png"
+  web: false
 
+  fullscreen: true
+  android_gravity: center
+  ios_content_mode: center
+
+  android_12:
+    color: "#FFFFFF"
+    color_dark: "#121212"
+    icon_background_color: "#FFFFFF"
+    icon_background_color_dark: "#121212"
+# ─────────────────────────────────────────────
+# 📱 ICONO APP
+# ─────────────────────────────────────────────
+flutter_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon-planeta.png"
+
+# ─────────────────────────────────────────────
+# 🎨 FLUTTER
+# ─────────────────────────────────────────────
 flutter:
   uses-material-design: true
 
   assets:
     - assets/img/
+    - assets/fonts/

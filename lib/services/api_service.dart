@@ -1,72 +1,228 @@
+// lib/services/api_service.dart
+// ─────────────────────────────────────────────────────────────
+// API SERVICE - DIO (SYNC NUBE MÓVIL)
+// ─────────────────────────────────────────────────────────────
+
 import 'dart:convert';
-import 'package:http/http.dart' as http;
+import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
 class ApiService {
-  static const String baseUrl = 'http://192.168.137.1/api';
-  static const Duration _timeout = Duration(seconds: 10);
+  // ─────────────────────────────────────────────────────────────
+  // BASE URLS
+  // ─────────────────────────────────────────────────────────────
+  static const String _baseUrl =
+      'https://prologics.co/app_planeta_pruebas/controlador';
 
-  // ── Validar usuario ───────────────────────────────────────────
-  static Future<Map<String, dynamic>> validarUsuario(String clave) async {
+  static const String urlDescargar =
+      '$_baseUrl/descarga_datos_nube.php';
+  static const String urlSubir =
+      '$_baseUrl/subir_datos_nube_app.php';
+
+  // ─────────────────────────────────────────────────────────────
+  // DIO GLOBAL
+  // ─────────────────────────────────────────────────────────────
+  static final Dio _dio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 15),
+      receiveTimeout: const Duration(seconds: 30),
+      headers: {'Content-Type': 'application/json'},
+    ),
+  );
+
+  // ─────────────────────────────────────────────────────────────
+  // MÉTODO BASE REUTILIZABLE (CORREGIDO)
+  // ─────────────────────────────────────────────────────────────
+  static Future<Map<String, dynamic>> _handleRequest(
+    Future<Response> request,
+  ) async {
     try {
-      final res = await http.post(
-        Uri.parse('$baseUrl/validar_usuario.php'),
-        body: {'clave': clave},
-      ).timeout(_timeout);
-      return jsonDecode(res.body);
+      final response = await request;
+      dynamic data = response.data;
+
+      // DEBUG (puedes quitar luego)
+      if (kDebugMode) {
+        debugPrint('RESPONSE DATA: $data');
+        debugPrint('TYPE: ${data.runtimeType}');
+      }
+
+      // 🟢 Si viene como String (muy común en PHP)
+      if (data is String) {
+        try {
+          data = jsonDecode(data);
+        } catch (_) {
+          return {
+            'status': 'ok',
+            'data': data,
+          };
+        }
+      }
+
+      // 🟢 Si es MAP (lo ideal)
+      if (data is Map<String, dynamic>) {
+        return data;
+      }
+
+      // 🟢 Si es LISTA
+      if (data is List) {
+        return {
+          'status': 'ok',
+          'data': data,
+        };
+      }
+
+      // ❌ Caso raro
+      return {
+        'status': 'error',
+        'message': 'Formato de respuesta no válido',
+      };
+    } on DioException catch (e) {
+      return {
+        'status': 'error',
+        'message': _parseDioError(e),
+      };
     } catch (e) {
-      return {'status': 'error', 'mensaje': 'Error de conexión con el servidor'};
+      return {
+        'status': 'error',
+        'message': 'Error inesperado: $e',
+      };
     }
   }
 
-  // ── Buscar libro (EAN o Referencia) ───────────────────────────
-  static Future<Map<String, dynamic>> buscarLibro(String codigo) async {
+  // ─────────────────────────────────────────────────────────────
+  // PARSEAR ERRORES DE DIO (MEJORADO)
+  // ─────────────────────────────────────────────────────────────
+  static String _parseDioError(DioException e) {
     try {
-      final res = await http.post(
-        Uri.parse('$baseUrl/buscar_libro.php'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'codigo': codigo}),
-      ).timeout(_timeout);
-      return jsonDecode(res.body);
-    } catch (e) {
-      return {'status': 'error', 'mensaje': 'Error al buscar el libro'};
+      final data = e.response?.data;
+
+      if (data is Map<String, dynamic>) {
+        return data['message']?.toString() ?? 'Error del servidor';
+      }
+
+      if (data is String) {
+        return data;
+      }
+
+      return e.message ?? 'Error de conexión';
+    } catch (_) {
+      return 'Error de conexión';
     }
   }
 
-  // ── Guardar libro nuevo en BD ─────────────────────────────────
+  // ══════════════════════════════════════════════════════════
+  // ☁️ DESCARGAR DATOS
+  // ══════════════════════════════════════════════════════════
+  static Future<Map<String, dynamic>> descargarDatos() {
+    return _handleRequest(_dio.get(urlDescargar));
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ⬆️ SUBIR DATOS
+  // ══════════════════════════════════════════════════════════
+  static Future<Map<String, dynamic>> subirDatos() {
+    return _handleRequest(_dio.get(urlSubir));
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // 🟢 USUARIO
+  // ══════════════════════════════════════════════════════════
+  static Future<Map<String, dynamic>> validarUsuario(String clave) {
+    return _handleRequest(
+      _dio.post(
+        '$_baseUrl/utils.php',
+        data: {'clave': clave},
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // 📚 LIBROS
+  // ══════════════════════════════════════════════════════════
+  static Future<Map<String, dynamic>> buscarLibro(String codigo) {
+    return _handleRequest(
+      _dio.post(
+        '$_baseUrl/buscar_libro.php',
+        data: {'codigo': codigo},
+      ),
+    );
+  }
+
   static Future<Map<String, dynamic>> guardarLibro({
     required String ean,
     required String ref,
     required String descripcion,
-  }) async {
-    try {
-      final res = await http.post(
-        Uri.parse('$baseUrl/buscar_libro.php'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'guardar':     true,
-          'ean':         ean,
-          'ref':         ref,
+  }) {
+    return _handleRequest(
+      _dio.post(
+        '$_baseUrl/buscar_libro.php',
+        data: {
+          'guardar': true,
+          'ean': ean,
+          'ref': ref,
           'descripcion': descripcion,
-        }),
-      ).timeout(_timeout);
-      return jsonDecode(res.body);
-    } catch (e) {
-      return {'status': 'error', 'mensaje': 'Error al guardar el libro'};
-    }
+        },
+      ),
+    );
   }
 
-  // ── Registrar traspaso ────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════
+  // 🔄 TRASPASOS
+  // ══════════════════════════════════════════════════════════
   static Future<Map<String, dynamic>> registrarTraspaso(
-      Map<String, dynamic> data) async {
-    try {
-      final res = await http.post(
-        Uri.parse('$baseUrl/traspaso.php'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(data),
-      ).timeout(const Duration(seconds: 15));
-      return jsonDecode(res.body);
-    } catch (e) {
-      return {'status': 'error', 'mensaje': 'Error al registrar el traspaso'};
-    }
+      Map<String, dynamic> data) {
+    return _handleRequest(
+      _dio.post('$_baseUrl/utils.php', data: data),
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // 🔐 ADMIN LOGIN
+  // ══════════════════════════════════════════════════════════
+  static Future<Map<String, dynamic>> adminLogin({
+  required String nick,
+  required String pwd,
+}) {
+  return _handleRequest(
+    _dio.post(
+      '$_baseUrl/login.php',
+      data: {
+        'usuario': nick,   // 👈 CAMBIO CLAVE
+        'password': pwd,   // 👈 CAMBIO CLAVE
+      },
+    ),
+  );
+}
+
+  
+  // ══════════════════════════════════════════════════════════
+  // ☁️ SYNC ADMIN
+  // ══════════════════════════════════════════════════════════
+  static Future<Map<String, dynamic>> getSyncPendientes() {
+    return _handleRequest(
+      _dio.get('$_baseUrl/admin_sync.php'),
+    );
+  }
+
+  static Future<Map<String, dynamic>> marcarSincronizadoHmoval(
+      List<int> numMovimientos) {
+    return _handleRequest(
+      _dio.post(
+        '$_baseUrl/admin_sync.php',
+        data: {
+          'accion': 'marcar_hmoval',
+          'num_movimientos': numMovimientos,
+        },
+      ),
+    );
+  }
+
+  static Future<Map<String, dynamic>> marcarSincronizadoFacturas() {
+    return _handleRequest(
+      _dio.post(
+        '$_baseUrl/admin_sync.php',
+        data: {'accion': 'marcar_mcabfa'},
+      ),
+    );
   }
 }
