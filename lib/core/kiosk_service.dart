@@ -1,5 +1,5 @@
 // lib/core/kiosk_service.dart
-// 100% LOCAL — sin ninguna llamada al servidor
+// 🔒 KIOSKO REAL — usa startLockTask() de Android nativo
 
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -7,9 +7,12 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class KioskService extends ChangeNotifier {
-  static const String _pin      = 'sistemas';
+  static const String _pin     = 'sistemas';
   static const Duration _timeout = Duration(minutes: 5);
-  static const String _prefKey  = 'kiosko_activo';
+  static const String _prefKey = 'kiosko_activo';
+
+  // Canal nativo Android
+  static const _channel = MethodChannel('com.example.traspasos_planeta/kiosk');
 
   bool   _isKioskActive = false;
   Timer? _timeoutTimer;
@@ -17,7 +20,7 @@ class KioskService extends ChangeNotifier {
 
   bool get isKioskActive => _isKioskActive;
 
-  // ── INIT: cargar estado guardado localmente ────────────────
+  // ── CARGAR ESTADO PERSISTIDO ───────────────────────────────
   Future<void> cargarEstadoPersistido() async {
     final prefs = await SharedPreferences.getInstance();
     final debeEstarActivo = prefs.getBool(_prefKey) ?? false;
@@ -30,20 +33,22 @@ class KioskService extends ChangeNotifier {
   }
 
   // ── ACTIVAR ────────────────────────────────────────────────
-  Future<void> activate() async {
-    await _activarInterno();
-  }
+  Future<void> activate() async => await _activarInterno();
 
   Future<void> _activarInterno() async {
+    try {
+      // 🔒 Llama a startLockTask() en Android — bloqueo REAL
+      await _channel.invokeMethod('startKiosk');
+    } catch (e) {
+      debugPrint('Error activando kiosk nativo: $e');
+    }
+
     _isKioskActive = true;
     await _persistir(true);
 
-    await SystemChrome.setEnabledSystemUIMode(
-      SystemUiMode.immersiveSticky,
-    );
-    await SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-    ]);
+    // Ocultar barras también
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
     _resetTimer();
     notifyListeners();
@@ -56,12 +61,17 @@ class KioskService extends ChangeNotifier {
     return true;
   }
 
-  // ── FORZAR DESACTIVACIÓN (botón admin) ────────────────────
-  Future<void> forceDeactivate() async {
-    await _desactivarInterno();
-  }
+  // ── FORZAR DESACTIVACIÓN (desde admin) ────────────────────
+  Future<void> forceDeactivate() async => await _desactivarInterno();
 
   Future<void> _desactivarInterno() async {
+    try {
+      // 🔓 Llama a stopLockTask() en Android
+      await _channel.invokeMethod('stopKiosk');
+    } catch (e) {
+      debugPrint('Error desactivando kiosk nativo: $e');
+    }
+
     _isKioskActive = false;
     await _persistir(false);
     _timeoutTimer?.cancel();
