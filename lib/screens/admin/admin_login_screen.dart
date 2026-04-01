@@ -1,5 +1,9 @@
+// lib/screens/admin/admin_login_screen.dart
+
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import '../../core/connectivity_service.dart';
+import '../../core/database_service.dart';
 import '../../services/api_service.dart';
 import 'admin_dashboard_screen.dart';
 
@@ -27,9 +31,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
   void initState() {
     super.initState();
     _animCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 700),
-    );
+        vsync: this, duration: const Duration(milliseconds: 700));
     _fadeAnim = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
     _animCtrl.forward();
   }
@@ -42,7 +44,6 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
     super.dispose();
   }
 
-  // 🔥 LOGIN ADAPTADO A TU BACKEND (SIN TOCAR PHP)
   Future<void> _login() async {
     final nick = _nickCtrl.text.trim();
     final pwd  = _pwdCtrl.text.trim();
@@ -52,61 +53,96 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
       return;
     }
 
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    setState(() { _loading = true; _error = null; });
 
-    final resp = await ApiService.adminLogin(nick: nick, pwd: pwd);
+    final online = ConnectivityService().isOnline;
+
+    if (online) {
+      // ══ CON INTERNET — valida en servidor ═══════════════
+      await _loginOnline(nick, pwd);
+    } else {
+      // ══ SIN INTERNET — valida en BD local ═══════════════
+      await _loginOffline(nick, pwd);
+    }
 
     setState(() => _loading = false);
+  }
+
+  // ── LOGIN ONLINE ──────────────────────────────────────────
+  Future<void> _loginOnline(String nick, String pwd) async {
+    final resp = await ApiService.adminLogin(nick: nick, pwd: pwd);
 
     if (!mounted) return;
 
-    // 🟢 LOGIN EXITOSO (aunque backend mande HTML)
     if (resp['status'] == 'ok') {
+      // ✅ Guardar credenciales localmente para uso offline futuro
+      await DatabaseService().guardarAdminLocal(nick, pwd);
 
-      Map<String, dynamic> adminData = {
-        'usuario': nick,
-        'tipo': 'admin'
-      };
-
-      // Si viene algo usable lo intentamos parsear
+      Map<String, dynamic> adminData = {'usuario': nick, 'tipo': 'admin'};
       final rawData = resp['data'];
-
       if (rawData is Map<String, dynamic>) {
         adminData = rawData;
       } else if (rawData is String) {
         try {
           final decoded = jsonDecode(rawData);
-          if (decoded is Map<String, dynamic>) {
-            adminData = decoded;
-          }
-        } catch (_) {
-          // ignoramos porque puede ser HTML
-        }
+          if (decoded is Map<String, dynamic>) adminData = decoded;
+        } catch (_) {}
       }
 
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => AdminDashboardScreen(
-            adminData: adminData,
-          ),
-        ),
-      );
-
+      _irAlDashboard(adminData);
     } else {
       setState(() {
-        _error = resp['message'] ??
-                 resp['mensaje'] ??
-                 'Usuario o contraseña incorrectos';
+        _error = resp['message'] ?? resp['mensaje'] ?? 'Usuario o contraseña incorrectos';
       });
     }
   }
 
+  // ── LOGIN OFFLINE ─────────────────────────────────────────
+  Future<void> _loginOffline(String nick, String pwd) async {
+    final db    = DatabaseService();
+    final valido = await db.validarAdminLocal(nick, pwd);
+
+    if (!mounted) return;
+
+    if (valido) {
+      // ✅ Credenciales correctas en BD local
+      final adminData = await db.getAdminLocal(nick) ?? {};
+      _irAlDashboard({
+        'usuario': nick,
+        'tipo':    'admin',
+        ...adminData,
+      });
+    } else {
+      // Verificar si hay algún admin guardado
+      final tieneAdmin = await _hayAdminGuardado();
+      setState(() {
+        _error = tieneAdmin
+            ? 'Usuario o contraseña incorrectos'
+            : 'Sin conexión y sin datos locales.\nConéctate a internet y descarga los datos primero.';
+      });
+    }
+  }
+
+  Future<bool> _hayAdminGuardado() async {
+    final db   = DatabaseService();
+    final rows = await (await db.database).query('admin_local', limit: 1);
+    return rows.isNotEmpty;
+  }
+
+  void _irAlDashboard(Map<String, dynamic> adminData) {
+    if (!mounted) return;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AdminDashboardScreen(adminData: adminData),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final online = ConnectivityService().isOnline;
+
     return Scaffold(
       backgroundColor: const Color(0xFF0A0E1A),
       body: FadeTransition(
@@ -120,48 +156,71 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
 
-                  // LOGO
                   Container(
-                    width: 80,
-                    height: 80,
-                    decoration: BoxDecoration(
+                    width: 80, height: 80,
+                    decoration: const BoxDecoration(
                       shape: BoxShape.circle,
-                      gradient: const LinearGradient(
+                      gradient: LinearGradient(
                         colors: [Color(0xFF4F8CFF), Color(0xFF1A3A8F)],
                       ),
                     ),
-                    child: const Icon(
-                      Icons.admin_panel_settings,
-                      color: Colors.white,
-                      size: 40,
-                    ),
+                    child: const Icon(Icons.admin_panel_settings,
+                        color: Colors.white, size: 40),
                   ),
 
                   const SizedBox(height: 24),
 
-                  const Text(
-                    'PANEL ADMINISTRADOR',
-                    style: TextStyle(
-                      color: Color(0xFF4F8CFF),
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 3,
-                    ),
-                  ),
+                  const Text('PANEL ADMINISTRADOR',
+                      style: TextStyle(color: Color(0xFF4F8CFF),
+                          fontSize: 13, fontWeight: FontWeight.w700,
+                          letterSpacing: 3)),
 
                   const SizedBox(height: 6),
 
-                  const Text(
-                    'Editorial Planeta Colombia',
-                    style: TextStyle(
-                      color: Colors.white70,
-                      fontSize: 16,
+                  const Text('Editorial Planeta Colombia',
+                      style: TextStyle(color: Colors.white70, fontSize: 16)),
+
+                  const SizedBox(height: 8),
+
+                  // Badge online/offline
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: (online ? Colors.green : Colors.orange)
+                          .withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: (online ? Colors.green : Colors.orange)
+                            .withValues(alpha: 0.5),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          online ? Icons.cloud_done_outlined
+                                 : Icons.cloud_off_outlined,
+                          color: online ? Colors.green : Colors.orange,
+                          size: 14,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          online
+                              ? 'Online — validando en servidor'
+                              : 'Offline — usando datos locales',
+                          style: TextStyle(
+                            color: online ? Colors.green : Colors.orange,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
 
-                  const SizedBox(height: 40),
+                  const SizedBox(height: 32),
 
-                  // CARD
                   Container(
                     padding: const EdgeInsets.all(28),
                     decoration: BoxDecoration(
@@ -197,29 +256,46 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
                             filled: true,
                             fillColor: const Color(0xFF1E2640),
                             border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
+                                borderRadius: BorderRadius.circular(12)),
                           ),
                         ),
 
                         if (_error != null) ...[
                           const SizedBox(height: 14),
-                          Text(
-                            _error!,
-                            style: const TextStyle(color: Colors.red),
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: Colors.red.withValues(alpha: 0.08),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                  color: Colors.red.withValues(alpha: 0.3)),
+                            ),
+                            child: Text(_error!,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                    color: Colors.redAccent, fontSize: 12)),
                           ),
                         ],
 
                         const SizedBox(height: 24),
 
                         SizedBox(
-                          width: double.infinity,
-                          height: 50,
+                          width: double.infinity, height: 50,
                           child: ElevatedButton(
                             onPressed: _loading ? null : _login,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF4F8CFF),
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12)),
+                            ),
                             child: _loading
-                                ? const CircularProgressIndicator()
-                                : const Text('Ingresar'),
+                                ? const SizedBox(width: 22, height: 22,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2, color: Colors.white))
+                                : const Text('Ingresar',
+                                    style: TextStyle(fontSize: 15,
+                                        fontWeight: FontWeight.bold)),
                           ),
                         ),
                       ],
@@ -230,7 +306,8 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
 
                   TextButton(
                     onPressed: () => Navigator.pop(context),
-                    child: const Text('← Volver'),
+                    child: const Text('← Volver',
+                        style: TextStyle(color: Colors.white54)),
                   ),
                 ],
               ),
@@ -254,9 +331,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
         prefixIcon: Icon(icon),
         filled: true,
         fillColor: const Color(0xFF1E2640),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
       ),
     );
   }

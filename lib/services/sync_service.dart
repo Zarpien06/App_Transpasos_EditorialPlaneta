@@ -1,29 +1,16 @@
 // lib/services/sync_service.dart
-// ─────────────────────────────────────────────────────────────
-// SYNC SERVICE UNIFICADO
-// Reemplaza sync_service.dart + sync_movil_service.dart
-// (eran duplicados con la misma lógica)
-//
-// ⬇ descargar()        → nube → local  (maestros: admin, usuarios, productos)
-// ⬆ subir()            → local → nube  (productos + hmoval con sincronizado=0)
-// 🔄 sincronizarCompleto() → bajar + subir
-// ─────────────────────────────────────────────────────────────
 
+import 'package:flutter/foundation.dart';
+import '../core/database_service.dart';
 import 'api_service.dart';
-
-// ─────────────────────────────────────────────────────────────
-// MODELOS
-// ─────────────────────────────────────────────────────────────
 
 class SyncResultadoDescarga {
   final bool exitoso;
   final String mensaje;
   final String? serverTime;
-
   final bool adminOk;
   final bool usuariosTraspasosOk;
   final bool productosOk;
-
   final Map<String, String> errores;
 
   const SyncResultadoDescarga({
@@ -35,24 +22,15 @@ class SyncResultadoDescarga {
     this.productosOk = false,
     this.errores = const {},
   });
-
-  bool get hayErrores => errores.isNotEmpty;
-
-  @override
-  String toString() =>
-      'Descarga(ok:$exitoso admin:$adminOk usuarios:$usuariosTraspasosOk '
-      'productos:$productosOk errores:$errores)';
 }
 
 class SyncResultadoSubida {
   final bool exitoso;
   final String mensaje;
-
   final int productosInsertados;
   final int productosOmitidos;
   final int hmovalOk;
   final int hmovalFail;
-
   final Map<String, dynamic> errores;
 
   const SyncResultadoSubida({
@@ -64,30 +42,13 @@ class SyncResultadoSubida {
     this.hmovalFail          = 0,
     this.errores             = const {},
   });
-
-  bool get hayErrores => errores.isNotEmpty || hmovalFail > 0;
-
-  @override
-  String toString() =>
-      'Subida(ok:$exitoso productos:+$productosInsertados '
-      'omitidos:$productosOmitidos hmoval:ok$hmovalOk fail:$hmovalFail)';
 }
 
-// ─────────────────────────────────────────────────────────────
-// SERVICE
-// ─────────────────────────────────────────────────────────────
-
 class SyncService {
+
   // ══════════════════════════════════════════════════════════
   // ⬇️ DESCARGAR — nube → local
-  // Respuesta PHP esperada:
-  // {
-  //   "status": "ok",
-  //   "message": "...",
-  //   "server_time": "2025-01-01 12:00:00",
-  //   "data": { "admin": "ok", "usuarios_transpasos": "ok", "productos": "ok" },
-  //   "errores": {}
-  // }
+  // Guarda admin y productos en SQLite para uso offline
   // ══════════════════════════════════════════════════════════
   static Future<SyncResultadoDescarga> descargar() async {
     try {
@@ -100,13 +61,37 @@ class SyncService {
       final errores    = (res['errores']    as Map<String, dynamic>? ?? {})
           .map((k, v) => MapEntry(k, v.toString()));
 
+      if (status == 'ok') {
+        final db = DatabaseService();
+
+        // ✅ Guardar credenciales admin en BD local
+        final adminData = res['admin'] as Map<String, dynamic>?;
+        if (adminData != null) {
+          final usuario  = adminData['usuario']  as String? ?? '';
+          final password = adminData['password'] as String? ?? '';
+          if (usuario.isNotEmpty && password.isNotEmpty) {
+            await db.guardarAdminLocal(usuario, password);
+            debugPrint('✅ Admin guardado localmente: $usuario');
+          }
+        }
+
+        // ✅ Guardar productos en BD local
+        final productos = res['productos'] as List<dynamic>?;
+        if (productos != null && productos.isNotEmpty) {
+          await db.guardarProductos(
+            productos.cast<Map<String, dynamic>>(),
+          );
+          debugPrint('✅ ${productos.length} productos guardados localmente');
+        }
+      }
+
       return SyncResultadoDescarga(
         exitoso:             status == 'ok',
         mensaje:             mensaje,
         serverTime:          serverTime,
-        adminOk:             data['admin']              == 'ok',
+        adminOk:             data['admin']               == 'ok',
         usuariosTraspasosOk: data['usuarios_transpasos'] == 'ok',
-        productosOk:         data['productos']          == 'ok',
+        productosOk:         data['productos']           == 'ok',
         errores:             errores,
       );
     } catch (e) {
@@ -119,18 +104,6 @@ class SyncService {
 
   // ══════════════════════════════════════════════════════════
   // ⬆️ SUBIR — local → nube
-  // Respuesta PHP esperada:
-  // {
-  //   "status": "ok",
-  //   "message": "...",
-  //   "resumen": {
-  //     "productos_insertados": 5,
-  //     "productos_omitidos": 2,
-  //     "hmoval_ok": 10,
-  //     "hmoval_fail": 0
-  //   },
-  //   "errores": {}
-  // }
   // ══════════════════════════════════════════════════════════
   static Future<SyncResultadoSubida> subir() async {
     try {
@@ -159,8 +132,7 @@ class SyncService {
   }
 
   // ══════════════════════════════════════════════════════════
-  // 🔄 COMPLETO — bajar primero, luego subir
-  // Siempre baja datos maestros antes de subir locales.
+  // 🔄 COMPLETO
   // ══════════════════════════════════════════════════════════
   static Future<({
     SyncResultadoDescarga descarga,
@@ -169,7 +141,6 @@ class SyncService {
   })> sincronizarCompleto() async {
     final descarga = await descargar();
     final subida   = await subir();
-
     return (
       descarga:    descarga,
       subida:      subida,
