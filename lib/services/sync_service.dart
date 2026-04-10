@@ -1,10 +1,4 @@
 // lib/services/sync_service.dart
-//
-// Sincronización automática offline-first.
-// • Descarga nube → SQLite local
-// • Sube traspasos pendientes → nube
-// • Registra cada operación en SyncLogService (estado real por registro)
-// • NO requiere botón: lo llaman ConnectivityService y main.dart
 
 import 'package:flutter/foundation.dart';
 import '../core/database_service.dart';
@@ -13,7 +7,7 @@ import 'sync_log_service.dart';
 import '../core/device_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MODELOS DE RESULTADO (compatibilidad con código existente)
+// MODELOS DE RESULTADO
 // ─────────────────────────────────────────────────────────────────────────────
 
 class SyncResultadoDescarga {
@@ -45,7 +39,6 @@ class SyncResultadoSubida {
   final int hmovalOmitidos;
   final int hmovalFallidos;
   final Map<String, dynamic> errores;
-  // Legacy – mantenidos para compatibilidad
   final int productosInsertados;
   final int productosOmitidos;
   final int productosFallidos;
@@ -69,16 +62,13 @@ class SyncResultadoSubida {
 
 class SyncService {
   static final _log = SyncLogService();
-
-  // Guard para no lanzar dos sincronizaciones en paralelo
   static bool _running = false;
 
   // ──────────────────────────────────────────────────────────────────────────
-  // DESCARGA: nube → local
+  // DESCARGA
   // ──────────────────────────────────────────────────────────────────────────
 
   static Future<SyncResultadoDescarga> descargar({String? stand}) async {
-    // Log de inicio
     await _log.agregar(
       tipo    : SyncLogTipo.descarga,
       estado  : SyncLogEstado.enProceso,
@@ -88,15 +78,14 @@ class SyncService {
     try {
       final res = await ApiService.descargarDatos(stand: stand);
 
-      final status     = res['status']?.toString()  ?? 'error';
-      final mensaje    = res['message']?.toString()  ?? 'Sin respuesta';
+      final status     = res['status']?.toString()     ?? 'error';
+      final mensaje    = res['message']?.toString()     ?? 'Sin respuesta';
       final serverTime = res['server_time']?.toString();
 
       final erroresRaw = res['errores'];
-      final Map<String, String> errores =
-          (erroresRaw is Map)
-              ? erroresRaw.map((k, v) => MapEntry(k.toString(), v.toString()))
-              : <String, String>{};
+      final Map<String, String> errores = (erroresRaw is Map)
+          ? erroresRaw.map((k, v) => MapEntry(k.toString(), v.toString()))
+          : <String, String>{};
 
       bool adminOk             = false;
       bool usuariosTraspasosOk = false;
@@ -106,7 +95,6 @@ class SyncService {
       if (status == 'ok') {
         final db = DatabaseService();
 
-        // ── ADMIN ──────────────────────────────────────────────────────────
         final admin = ApiService.getAdmin(res);
         if (admin != null) {
           final nick = admin['Nick_Usuario']?.toString().trim() ?? '';
@@ -122,10 +110,8 @@ class SyncService {
           }
         }
 
-        // ── USUARIOS TRASPASOS ─────────────────────────────────────────────
         final usuariosRaw = res['data']?['usuarios_transpasos'];
         final List<Map<String, dynamic>> usuarios;
-
         if (usuariosRaw is List) {
           usuarios = usuariosRaw
               .whereType<Map>()
@@ -153,7 +139,6 @@ class SyncService {
           );
         }
 
-        // ── PRODUCTOS ──────────────────────────────────────────────────────
         final productos = ApiService.getProductos(res);
         if (productos.isNotEmpty) {
           await db.guardarProductos(productos);
@@ -171,7 +156,6 @@ class SyncService {
           );
         }
 
-        // ── DATOS CAJA ─────────────────────────────────────────────────────
         final datosCaja = ApiService.getDatosCaja(res);
         if (datosCaja.isNotEmpty) {
           datosCajaOk = true;
@@ -182,7 +166,6 @@ class SyncService {
           );
         }
 
-        // Log de errores del servidor (si los hay)
         for (final entry in errores.entries) {
           await _log.agregar(
             tipo    : SyncLogTipo.descarga,
@@ -192,19 +175,17 @@ class SyncService {
           );
         }
 
-        // Actualizar el log de inicio con el resultado final
         await _log.actualizarUltimo(
-          tipo          : SyncLogTipo.descarga,
-          nuevoEstado   : SyncLogEstado.ok,
-          nuevoMensaje  : 'Descarga completada${serverTime != null ? " · $serverTime" : ""}',
+          tipo         : SyncLogTipo.descarga,
+          nuevoEstado  : SyncLogEstado.ok,
+          nuevoMensaje : 'Descarga completada${serverTime != null ? " · $serverTime" : ""}',
         );
       } else {
-        // status != ok
         await _log.actualizarUltimo(
-          tipo          : SyncLogTipo.descarga,
-          nuevoEstado   : SyncLogEstado.fallido,
-          nuevoMensaje  : 'Descarga fallida: $mensaje',
-          detalle       : errores.isNotEmpty ? errores.toString() : null,
+          tipo         : SyncLogTipo.descarga,
+          nuevoEstado  : SyncLogEstado.fallido,
+          nuevoMensaje : 'Descarga fallida: $mensaje',
+          detalle      : errores.isNotEmpty ? errores.toString() : null,
         );
       }
 
@@ -225,15 +206,12 @@ class SyncService {
         nuevoMensaje : 'Error al descargar',
         detalle      : e.toString(),
       );
-      return SyncResultadoDescarga(
-        exitoso : false,
-        mensaje : 'Error al descargar: $e',
-      );
+      return SyncResultadoDescarga(exitoso: false, mensaje: 'Error al descargar: $e');
     }
   }
 
   // ──────────────────────────────────────────────────────────────────────────
-  // SUBIDA: local → nube (con log por registro)
+  // SUBIDA
   // ──────────────────────────────────────────────────────────────────────────
 
   static Future<SyncResultadoSubida> subir() async {
@@ -253,10 +231,7 @@ class SyncService {
           nuevoEstado  : SyncLogEstado.ok,
           nuevoMensaje : 'Sin traspasos pendientes',
         );
-        return const SyncResultadoSubida(
-          exitoso : true,
-          mensaje : 'Sin pendientes',
-        );
+        return const SyncResultadoSubida(exitoso: true, mensaje: 'Sin pendientes');
       }
 
       await _log.actualizarUltimo(
@@ -265,73 +240,87 @@ class SyncService {
         nuevoMensaje : 'Subiendo ${traspasos.length} traspasos…',
       );
 
-      // ── Construir movimientos ──────────────────────────────────────────
       final uuidsPendientes =
           traspasos.map((t) => t['local_uuid'] as String).toList();
-      
+
       final movimientos = <Map<String, dynamic>>[];
       final manucaAUuid = <String, String>{};
-      
+
+      // ── deviceId UNA sola vez fuera del loop ──
       final deviceId = await DeviceService().getDeviceId();
-      
+
       for (final t in traspasos) {
-        final origen  = t['origen_decoded']  as Map<String, dynamic>;
-        final destino = t['destino_decoded'] as Map<String, dynamic>;
-        final lineas  = t['lineas']          as List;
-        final uuid    = t['local_uuid']      as String;
-      
+        final lineas = t['lineas'] as List;
+        final uuid   = t['local_uuid'] as String;
+
         final fecha = (t['fecha_creacion'] as String? ?? '')
             .replaceAll(RegExp(r'[^0-9]'), '');
-      
-        final base = '${deviceId}_${DateTime.now().millisecondsSinceEpoch}';
-      
+
+        // ── base fijo por traspaso: usa num_movimiento estable ──
+        final numMov = t['num_movimiento']?.toString() ??
+                       DateTime.now().millisecondsSinceEpoch.toString();
+        final base   = '${deviceId}_$numMov';
+
         manucaAUuid[base] = uuid;
-      
+
+        debugPrint(
+          '📦 Preparando traspaso uuid=$uuid | base=$base | '
+          'líneas=${lineas.length} | manuma=$numMov',
+        );
+
         for (var i = 0; i < lineas.length; i++) {
           final linea = lineas[i] as Map<String, dynamic>;
-      
+
+          debugPrint(
+            '   📄 línea ${i + 1}/${lineas.length} | '
+            'código=${linea['codigo']} | cantidad=${linea['cantidad']}',
+          );
+
           movimientos.add({
             'manuca': base,
-            'macdhr': ApiService.extraerNumeroCompleto(origen['Codigo_Almacen']),
+            'manuml': (i + 1).toString(),
+            'manuma': numMov,
+            // ── campos fijos ──
+            'macdhr': '1',
             'macdso': '1',
-            'macdeo': '1',
-            'macdao': ApiService.extraerNumeroCompleto(origen['Actividad']),
+            'macdeo': 'PL',
+            'macdao': '23',
             'macdhd': '1',
             'macdsd': '1',
-            'macded': destino['Empresa'] ?? '',
-            'macdad': ApiService.extraerNumeroCompleto(destino['Actividad']),
-            'manuml': (i + 1).toString(),
-            'manuma': t['num_movimiento'] ?? '0',
+            'macded': 'PL',
+            'macdad': '23',
+            // ── fijos de operación ──
             'macdco': 'TRA',
             'matran': 'TF',
             'matrge': 'ET',
+            // ── dinámicos ──
             'mafemo': fecha.length >= 8 ? fecha.substring(0, 8) : '',
             'mafman': fecha.length >= 4 ? fecha.substring(0, 4) : '',
             'mafmme': fecha.length >= 6 ? fecha.substring(4, 6) : '0',
             'mafmdi': fecha.length >= 8 ? fecha.substring(6, 8) : '0',
             'mahogr': DateTime.now().hour.toString(),
-            'macdlo': origen['Codigo_Almacen']  ?? '',
-            'macdld': destino['Codigo_Almacen'] ?? '',
-            'macdpt': linea['codigo']            ?? '',
+            'macdlo': t['origen_decoded']?['Codigo_Almacen']  ?? '',
+            'macdld': t['destino_decoded']?['Codigo_Almacen'] ?? '',
+            'macdpt': linea['codigo']   ?? '',
             'macant': (linea['cantidad'] as num?)?.toInt() ?? 1,
           });
         }
       }
-      
-      // ── Llamar al servidor ─────────────────────────────────────────────
+
+      debugPrint('📤 Total movimientos a subir: ${movimientos.length}');
+
       final result = await ApiService.subirDatosRaw(movimientos);
 
       final status  = result['status']?.toString()  ?? 'error';
       final mensaje = result['message']?.toString()  ?? 'Sin respuesta';
 
-      final resumen   = result['resumen']   as Map<String, dynamic>? ?? {};
-      final resHmoval = resumen['hmoval']   as Map<String, dynamic>? ?? {};
+      final resumen   = result['resumen']  as Map<String, dynamic>? ?? {};
+      final resHmoval = resumen['hmoval']  as Map<String, dynamic>? ?? {};
 
       final insertados = (resHmoval['insertados'] ?? 0) as int;
       final omitidos   = (resHmoval['omitidos']   ?? 0) as int;
       final fallidos   = (resHmoval['fallidos']   ?? 0) as int;
 
-      // ── Log global de la subida ────────────────────────────────────────
       if (status == 'ok') {
         await _log.actualizarUltimo(
           tipo         : SyncLogTipo.subida,
@@ -349,19 +338,15 @@ class SyncService {
         );
       }
 
-      // ── Log por registro omitido (detalle real del PHP) ───────────────
-      final omitidosDetalle =
-          result['omitidos_detalle'] as List? ??
-          resumen['omitidos_detalle'] as List? ?? [];
+      final omitidosDetalle = result['omitidos_detalle'] as List? ??
+                              resumen['omitidos_detalle'] as List? ?? [];
 
       for (final d in omitidosDetalle) {
         if (d is! Map) continue;
         final manucaVal = d['manuca']?.toString() ?? '?';
-        final motivo    = d['motivo']?.toString()  ??
-                          d['razon']?.toString()   ??
-                          'Sin motivo';
+        final motivo    = d['motivo']?.toString()  ?? d['razon']?.toString() ?? 'Sin motivo';
         final uuidAsoc  = manucaAUuid[manucaVal] ?? '';
-
+        debugPrint('⚠ Omitido — manuca=$manucaVal | motivo=$motivo | uuid=$uuidAsoc');
         await _log.agregar(
           tipo    : SyncLogTipo.subida,
           estado  : SyncLogEstado.omitido,
@@ -372,15 +357,12 @@ class SyncService {
         );
       }
 
-      // ── Log por registro fallido ───────────────────────────────────────
       final erroresList = result['errores'] as List? ?? [];
       for (final e in erroresList) {
         if (e is! Map) continue;
         final manucaVal = e['manuca']?.toString() ?? '?';
-        final motivo    = e['motivo']?.toString()  ??
-                          e['message']?.toString() ??
-                          'Error desconocido';
-
+        final motivo    = e['motivo']?.toString()  ?? e['message']?.toString() ?? 'Error desconocido';
+        debugPrint('❌ Fallido — manuca=$manucaVal | motivo=$motivo');
         await _log.agregar(
           tipo    : SyncLogTipo.subida,
           estado  : SyncLogEstado.fallido,
@@ -391,7 +373,6 @@ class SyncService {
         );
       }
 
-      // ── Log por registro insertado OK (uno por traspaso completo) ─────
       if (status == 'ok' && insertados > 0 && omitidos == 0 && fallidos == 0) {
         for (final entry in manucaAUuid.entries) {
           await _log.agregar(
@@ -404,14 +385,11 @@ class SyncService {
         }
       }
 
-      // ── Marcar estado en SQLite local ─────────────────────────────────
       if (status == 'ok') {
         if (fallidos == 0 && omitidos == 0) {
-          // Todo insertado → marcar como sincronizado
           await db.marcarTraspasosSincronizados(uuidsPendientes);
           debugPrint('✅ ${uuidsPendientes.length} traspasos sincronizados');
         } else {
-          // Parcial: solo marcar los que NO aparecen en omitidos/errores
           final manucasOmitidas = omitidosDetalle
               .whereType<Map>()
               .map((d) => d['manuca']?.toString())
@@ -431,8 +409,7 @@ class SyncService {
 
           if (uuidsOk.isNotEmpty) {
             await db.marcarTraspasosSincronizados(uuidsOk);
-            debugPrint('✅ ${uuidsOk.length} traspasos OK | '
-                '${manucasProblema.length} con problemas → reintento próximo ciclo');
+            debugPrint('✅ ${uuidsOk.length} OK | ${manucasProblema.length} con problemas');
           }
         }
       }
@@ -457,15 +434,12 @@ class SyncService {
         nuevoMensaje : 'Error al subir traspasos',
         detalle      : e.toString(),
       );
-      return SyncResultadoSubida(
-        exitoso : false,
-        mensaje : 'Error al subir: $e',
-      );
+      return SyncResultadoSubida(exitoso: false, mensaje: 'Error al subir: $e');
     }
   }
 
   // ──────────────────────────────────────────────────────────────────────────
-  // SINCRONIZACIÓN COMPLETA (llamada desde ConnectivityService y main.dart)
+  // SINCRONIZACIÓN COMPLETA
   // ──────────────────────────────────────────────────────────────────────────
 
   static Future<({
@@ -473,7 +447,6 @@ class SyncService {
     SyncResultadoSubida subida,
     bool todoExitoso,
   })> sincronizarCompleto({String? stand}) async {
-    // Anti-solapamiento
     if (_running) {
       return (
         descarga    : const SyncResultadoDescarga(exitoso: false, mensaje: 'Sync en curso'),
@@ -493,22 +466,15 @@ class SyncService {
     try {
       final descarga = await descargar(stand: stand);
       final subida   = await subir();
-
-      final ok = descarga.exitoso && subida.exitoso;
+      final ok       = descarga.exitoso && subida.exitoso;
 
       await _log.actualizarUltimo(
         tipo         : SyncLogTipo.sistema,
         nuevoEstado  : ok ? SyncLogEstado.ok : SyncLogEstado.omitido,
-        nuevoMensaje : ok
-            ? 'Sincronización completada'
-            : 'Sincronización con advertencias',
+        nuevoMensaje : ok ? 'Sincronización completada' : 'Sincronización con advertencias',
       );
 
-      return (
-        descarga    : descarga,
-        subida      : subida,
-        todoExitoso : ok,
-      );
+      return (descarga: descarga, subida: subida, todoExitoso: ok);
     } catch (e) {
       await _log.actualizarUltimo(
         tipo         : SyncLogTipo.sistema,

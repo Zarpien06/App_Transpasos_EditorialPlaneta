@@ -27,10 +27,9 @@ class ApiService {
   // HELPERS INTERNOS
   // ─────────────────────────────────────────────
 
-  // FIX #1 — Extrae TODOS los dígitos consecutivos: "A23" → "23", "23" → "23"
   static String extraerNumeroCompleto(dynamic value) {
-  final match = RegExp(r'\d+').firstMatch(value.toString());
-     return match != null ? match.group(0)! : '';
+    final match = RegExp(r'\d+').firstMatch(value.toString());
+    return match != null ? match.group(0)! : '';
   }
 
   static Future<Map<String, dynamic>> _handle(Future<Response> req) async {
@@ -88,7 +87,7 @@ class ApiService {
   }
 
   // ─────────────────────────────────────────────
-  // SUBIR DATOS — manuma autoincremento en servidor
+  // SUBIR DATOS
   // ─────────────────────────────────────────────
 
   static Future<Map<String, dynamic>> subirDatos() async {
@@ -108,60 +107,71 @@ class ApiService {
     final uuidsPendientes =
         traspasos.map((t) => t['local_uuid'] as String).toList();
 
-    // manuma es autoincremento en el servidor — no se calcula ni se envía
-    final movimientos = <Map<String, dynamic>>[];
+    final movimientos  = <Map<String, dynamic>>[];
+    final manucaAUuid  = <String, String>{};
 
-    // clave: manuca → uuid del traspaso (para logs de omitidos)
-    final Map<String, String> manucaAUuid = {};
+    // ── deviceId se obtiene UNA sola vez fuera del loop ──
+    final deviceId = await DeviceService().getDeviceId();
 
     for (final t in traspasos) {
-      final origen = t['origen_decoded'] as Map<String, dynamic>;
-      final destino = t['destino_decoded'] as Map<String, dynamic>;
       final lineas = t['lineas'] as List;
-      final uuid = t['local_uuid'] as String;
+      final uuid   = t['local_uuid'] as String;
 
       final fecha = (t['fecha_creacion'] as String? ?? '')
           .replaceAll(RegExp(r'[^0-9]'), '');
 
-     final deviceId = await DeviceService().getDeviceId();
-     final base = '${deviceId}_${DateTime.now().millisecondsSinceEpoch}';
-     
-     debugPrint(
-       '📦 Preparando traspaso uuid=$uuid base=$base (${lineas.length} líneas)',
-     );
-     
-     for (var i = 0; i < lineas.length; i++) {
-       final linea = lineas[i] as Map<String, dynamic>;
-     
-       final manuma = (i + 1).toString();
-     
-       movimientos.add({
-         'manuca': base, 
-         'manuml': manuma,
-         'manuma': t['num_movimiento'] ?? '0',
-         'macdhr': '1',
-         'macdso': '1',
-         'macdeo': origen['Empresa'] ?? '',
-         'macdao': extraerNumeroCompleto(origen['Actividad']),
-         'macdhd': '1',
-         'macdsd': '1',
-         'macded': destino['Empresa'] ?? '',
-         'macdad': extraerNumeroCompleto(destino['Actividad']),
-         'macdco': 'TRA',
-         'matran': 'TF',
-         'matrge': 'ET',
-         'mafemo': fecha.length >= 8 ? fecha.substring(0, 8) : '',
-         'mafman': fecha.length >= 4 ? fecha.substring(0, 4) : '',
-         'mafmme': fecha.length >= 6 ? fecha.substring(4, 6) : '0',
-         'mafmdi': fecha.length >= 8 ? fecha.substring(6, 8) : '0',
-         'mahogr': DateTime.now().hour.toString(),
-         'macdlo': origen['Codigo_Almacen'] ?? '',
-         'macdld': destino['Codigo_Almacen'] ?? '',
-         'macdpt': linea['codigo'] ?? '',
-         'macant': (linea['cantidad'] as num?)?.toInt() ?? 1,
-       });
+      // ── base fijo por traspaso: usa num_movimiento estable ──
+      final numMov = t['num_movimiento']?.toString() ?? 
+                     DateTime.now().millisecondsSinceEpoch.toString();
+      final base   = '${deviceId}_$numMov';
+
+      manucaAUuid[base] = uuid;
+
+      debugPrint(
+        '📦 Preparando traspaso uuid=$uuid | base=$base | '
+        'líneas=${lineas.length} | manuma=$numMov',
+      );
+
+      for (var i = 0; i < lineas.length; i++) {
+        final linea = lineas[i] as Map<String, dynamic>;
+
+        debugPrint(
+          '   📄 línea ${i + 1}/${lineas.length} | '
+          'código=${linea['codigo']} | cantidad=${linea['cantidad']}',
+        );
+
+        movimientos.add({
+          'manuca': base,
+          'manuml': (i + 1).toString(),
+          'manuma': numMov,
+          // ── campos fijos ──
+          'macdhr': '1',
+          'macdso': '1',
+          'macdeo': 'PL',
+          'macdao': '23',
+          'macdhd': '1',
+          'macdsd': '1',
+          'macded': 'PL',
+          'macdad': '23',
+          // ── fijos de operación ──
+          'macdco': 'TRA',
+          'matran': 'TF',
+          'matrge': 'ET',
+          // ── dinámicos ──
+          'mafemo': fecha.length >= 8 ? fecha.substring(0, 8) : '',
+          'mafman': fecha.length >= 4 ? fecha.substring(0, 4) : '',
+          'mafmme': fecha.length >= 6 ? fecha.substring(4, 6) : '0',
+          'mafmdi': fecha.length >= 8 ? fecha.substring(6, 8) : '0',
+          'mahogr': DateTime.now().hour.toString(),
+          'macdlo': t['origen_decoded']?['Codigo_Almacen']  ?? '',
+          'macdld': t['destino_decoded']?['Codigo_Almacen'] ?? '',
+          'macdpt': linea['codigo']   ?? '',
+          'macant': (linea['cantidad'] as num?)?.toInt() ?? 1,
+        });
       }
     }
+
+    debugPrint('📤 Total movimientos a subir: ${movimientos.length}');
 
     try {
       final response = await _dio.post(
@@ -173,71 +183,54 @@ class ApiService {
       final result = await _handle(Future.value(response));
 
       if (result['status'] == 'ok') {
-        final resumen = result['resumen'] as Map<String, dynamic>? ?? {};
-        final resHmoval = resumen['hmoval'] as Map<String, dynamic>? ?? {};
-        final fallidos = (resHmoval['fallidos'] ?? 0) as int;
-        final omitidos = (resHmoval['omitidos'] ?? 0) as int;
+        final resumen    = result['resumen']  as Map<String, dynamic>? ?? {};
+        final resHmoval  = resumen['hmoval']  as Map<String, dynamic>? ?? {};
+        final fallidos   = (resHmoval['fallidos']  ?? 0) as int;
+        final omitidos   = (resHmoval['omitidos']  ?? 0) as int;
         final insertados = (resHmoval['insertados'] ?? 0) as int;
 
         debugPrint(
-            '📊 Resumen subida → insertados: $insertados | omitidos: $omitidos | fallidos: $fallidos');
+          '📊 Resumen subida → '
+          'insertados: $insertados | omitidos: $omitidos | fallidos: $fallidos',
+        );
 
-        // ── Log detallado de cada movimiento omitido ──
-        // Intenta varias claves posibles según lo que devuelva el PHP
-        final detalles = resumen['detalle'] as List? ??
-            resumen['omitidos_detalle'] as List? ??
-            result['detalle'] as List? ??
-            result['omitidos_detalle'] as List? ??
-            result['items'] as List? ??
-            [];
+        final detalles = resumen['detalle']         as List? ??
+                         resumen['omitidos_detalle'] as List? ??
+                         result['detalle']           as List? ??
+                         result['omitidos_detalle']  as List? ??
+                         result['items']             as List? ??
+                         [];
 
         if (omitidos > 0) {
           debugPrint('──────────────────────────────────────────');
-          debugPrint('⚠ $omitidos MOVIMIENTO(S) OMITIDO(S) POR EL SERVIDOR:');
-
+          debugPrint('⚠ $omitidos MOVIMIENTO(S) OMITIDO(S):');
           if (detalles.isNotEmpty) {
             for (final d in detalles) {
               if (d is Map) {
-                final motivo = d['motivo'] ??
-                    d['razon'] ??
-                    d['reason'] ??
-                    d['mensaje'] ??
-                    d['message'] ??
-                    'Sin motivo reportado por el servidor';
-                final manucaVal = d['manuca'] ?? '?';
-                final manulVal  = d['manuml'] ?? d['linea'] ?? '?';
-                final codigoVal = d['macdpt'] ?? d['codigo'] ?? '?';
-                final uuidAsociado =
-                    manucaAUuid[manucaVal.toString()] ?? 'uuid desconocido';
-
-                debugPrint(
-                    '   🔸 manuca=$manucaVal | línea=$manulVal | código=$codigoVal');
+                final motivo     = d['motivo'] ?? d['razon'] ?? 'Sin motivo';
+                final manucaVal  = d['manuca'] ?? '?';
+                final manulVal   = d['manuml'] ?? '?';
+                final codigoVal  = d['macdpt'] ?? '?';
+                final uuidAsoc   = manucaAUuid[manucaVal.toString()] ?? 'uuid desconocido';
+                debugPrint('   🔸 manuca=$manucaVal | línea=$manulVal | código=$codigoVal');
                 debugPrint('      motivo: $motivo');
-                debugPrint('      uuid local: $uuidAsociado');
-              } else {
-                debugPrint('   🔸 detalle raw: $d');
+                debugPrint('      uuid local: $uuidAsoc');
               }
             }
           } else {
-            // El servidor reporta omitidos pero no manda detalle estructurado
-            debugPrint(
-                '   ℹ El servidor no envió detalle de motivo para los omitidos.');
-            debugPrint('   Respuesta completa del servidor:');
+            debugPrint('   ℹ Sin detalle del servidor.');
             debugPrint('   ${jsonEncode(result)}');
           }
           debugPrint('──────────────────────────────────────────');
         }
 
-        // ── Solo marca como sincronizado si NO hay omitidos ni fallidos ──
         if (fallidos == 0 && omitidos == 0) {
           await db.marcarTraspasosSincronizados(uuidsPendientes);
-          debugPrint(
-              '✅ ${uuidsPendientes.length} traspasos marcados como sincronizados');
+          debugPrint('✅ ${uuidsPendientes.length} traspasos sincronizados');
         } else {
           debugPrint(
-              '⚠ Traspasos NO marcados como sincronizados (fallidos=$fallidos, omitidos=$omitidos).');
-          debugPrint(
-              '   Se reintentarán en la próxima sincronización.');
+            '⚠ NO sincronizados (fallidos=$fallidos, omitidos=$omitidos) — reintento próximo ciclo',
+          );
           for (final uuid in uuidsPendientes) {
             debugPrint('   📌 UUID pendiente: $uuid');
           }
@@ -251,11 +244,9 @@ class ApiService {
   }
 
   // ─────────────────────────────────────────────
-  // SUBIR DATOS RAW — recibe movimientos ya construidos
+  // SUBIR DATOS RAW
   // ─────────────────────────────────────────────
 
-  /// Versión "raw" de subirDatos: recibe los movimientos ya construidos
-  /// (para que SyncService pueda loguear el resultado por registro).
   static Future<Map<String, dynamic>> subirDatosRaw(
     List<Map<String, dynamic>> movimientos,
   ) async {
@@ -325,7 +316,7 @@ class ApiService {
       res['modo'] == 'offline';
 
   // ─────────────────────────────────────────────
-  // LOGIN ADMIN — con fallback offline
+  // LOGIN ADMIN
   // ─────────────────────────────────────────────
 
   static Future<Map<String, dynamic>> adminLogin({
@@ -353,8 +344,7 @@ class ApiService {
       return {'status': 'error', 'message': 'No hay admin en servidor'};
     }
 
-    final nickOk =
-        admin['Nick_Usuario']?.toString().trim() == nick.trim();
+    final nickOk = admin['Nick_Usuario']?.toString().trim() == nick.trim();
 
     String pwdServer = '';
     try {
@@ -424,8 +414,7 @@ class ApiService {
       final db = DatabaseService();
       final local = await db.buscarUsuarioPorClave(claveNorm);
       if (local != null) {
-        debugPrint(
-            '✅ Usuario encontrado en LOCAL: ${local['Nombre_UsuarioT']}');
+        debugPrint('✅ Usuario encontrado en LOCAL: ${local['Nombre_UsuarioT']}');
         return {'status': 'ok', 'data': local};
       }
       debugPrint('⚠ Usuario no encontrado en local: $claveNorm');
@@ -449,9 +438,9 @@ class ApiService {
       final db = DatabaseService();
       final productos = await db.getProductos();
       final match = productos.where((p) {
-        return p['EAN']?.toString().trim() == codigoNorm ||
-            p['ISBN']?.toString().trim() == codigoNorm ||
-            p['Referencia']?.toString().trim() == codigoNorm;
+        return p['EAN']?.toString().trim()        == codigoNorm ||
+               p['ISBN']?.toString().trim()       == codigoNorm ||
+               p['Referencia']?.toString().trim() == codigoNorm;
       }).toList();
 
       if (match.isNotEmpty) {
@@ -459,9 +448,9 @@ class ApiService {
         return {
           'status': 'ok',
           'producto': {
-            'codigo': p['EAN'] ?? p['Referencia'] ?? '',
+            'codigo'     : p['EAN'] ?? p['Referencia'] ?? '',
             'descripcion': p['Desc_Referencia'] ?? '',
-            'precio': p['Precio'] ?? 0,
+            'precio'     : p['Precio'] ?? 0,
           }
         };
       }
@@ -484,63 +473,59 @@ class ApiService {
   static Future<Map<String, dynamic>> registrarTraspaso(
       Map<String, dynamic> data) async {
     try {
-      final db = DatabaseService();
+      final db        = DatabaseService();
       final deviceSvc = DeviceService();
 
-      final uuid = await deviceSvc.generarUUID();
-      final deviceId = await deviceSvc.getDeviceId();
-      final ahora = DateTime.now().toIso8601String();
+      final uuid        = await deviceSvc.generarUUID();
+      final deviceId    = await deviceSvc.getDeviceId();
+      final ahora       = DateTime.now().toIso8601String();
       final numMovLocal = await db.getNextManuma(deviceId);
 
-      final origen = data['origen'] as Map<String, dynamic>?;
+      final origen  = data['origen']  as Map<String, dynamic>?;
       final destino = data['destino'] as Map<String, dynamic>?;
-      final items = data['items'] as List<dynamic>? ?? [];
+      final items   = data['items']   as List<dynamic>? ?? [];
 
-      // ── 1. Insertar cabecera y capturar el id autoincrement ──
       final rowId = await db.insertarTraspasoReturnId({
-        'local_uuid': uuid,
-        'device_id': deviceId,
-        'origen_json': jsonEncode(origen),
-        'destino_json': jsonEncode(destino),
-        'estado': 'pendiente',
-        'num_movimiento' : numMovLocal.toString(),
+        'local_uuid'    : uuid,
+        'device_id'     : deviceId,
+        'origen_json'   : jsonEncode(origen),
+        'destino_json'  : jsonEncode(destino),
+        'estado'        : 'pendiente',
+        'num_movimiento': numMovLocal.toString(),
         'fecha_creacion': ahora,
       });
 
-      // ── 2. Insertar líneas ──
       for (final item in items) {
         await db.insertarLinea({
           'traspaso_uuid': uuid,
-          'codigo': item['codigo']?.toString() ?? '',
-          'descripcion': item['descripcion']?.toString() ?? '',
-          'cantidad': (item['cantidad'] as num?)?.toInt() ?? 1,
+          'codigo'       : item['codigo']?.toString()      ?? '',
+          'descripcion'  : item['descripcion']?.toString() ?? '',
+          'cantidad'     : (item['cantidad'] as num?)?.toInt() ?? 1,
         });
       }
 
-      // ── 3. Encolar para sincronización posterior ──
       await db.encolarSync(uuid);
 
-      debugPrint('✅ Traspaso guardado localmente: $uuid (id=$rowId)');
+      debugPrint(
+        '✅ Traspaso guardado: uuid=$uuid | rowId=$rowId | manuma=$numMovLocal | '
+        'items=${items.length}',
+      );
 
-      // ── 4. Intentar sincronizar de inmediato ──
-      debugPrint('📤 Intentando sincronizar...');
       final hayInternet = await ConnectivityService().checkOnline();
-
       if (hayInternet) {
         final resultadoSubida = await ApiService.subirDatos();
         debugPrint(resultadoSubida['status'] == 'ok'
             ? '✅ Sincronizado inmediatamente'
-            : '⚠ Subida falló, queda en cola: ${resultadoSubida['message']}');
+            : '⚠ Subida falló: ${resultadoSubida['message']}');
       } else {
-        debugPrint(
-            '📵 Sin internet — traspaso en cola, se subirá al reconectar');
+        debugPrint('📵 Sin internet — traspaso en cola');
       }
 
       return {
-        'status': 'ok',
+        'status'           : 'ok',
         'numero_movimiento': numMovLocal.toString(),
-        'uuid': uuid,
-        'modo': 'offline',
+        'uuid'             : uuid,
+        'modo'             : 'offline',
       };
     } catch (e) {
       debugPrint('⚠ Error guardando traspaso local: $e');
@@ -558,8 +543,7 @@ class ApiService {
     required String ean,
     required String ref,
     required String descripcion,
-  }) =>
-      subirDatos();
+  }) => subirDatos();
 
   static Future<Map<String, dynamic>> marcarSincronizadoHmoval(
           List<int> numMovimientos) =>
