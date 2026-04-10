@@ -1,17 +1,4 @@
 // lib/screens/lineas_screen.dart
-// ─────────────────────────────────────────────────────────────────────────────
-// PANTALLA 3 DEL FLUJO DE TRASPASO — ESCANEO DE LÍNEAS
-//
-// Responsabilidades:
-//   1. Escanear/escribir EAN o referencia de libros
-//   2. Buscar el libro en el servidor (ApiService.buscarLibro)
-//   3. Si existe en lista  → ofrecer agregar más unidades
-//   4. Si no existe en BD  → pedir descripción y guardarlo
-//   5. Controlar límite máximo de unidades (kMaxTotal)
-//   6. Permitir editar y eliminar items de la lista
-//   7. Confirmar el traspaso completo → navegar a FacturaScreen
-//   8. Registrar actividad en KioskService en cada interacción
-// ─────────────────────────────────────────────────────────────────────────────
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/material.dart';
@@ -22,6 +9,7 @@ import '../widgets/campo_codigo.dart';
 import '../widgets/alerts.dart';
 import 'factura_screen.dart';
 import '../core/constants.dart';
+import '../core/device_service.dart';
 import '../main.dart';
 
 class LineasScreen extends ConsumerStatefulWidget {
@@ -50,7 +38,6 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
     super.dispose();
   }
 
-  // ── LIMPIEZA DE CÓDIGO ───────────────────────────────────────────────────
   String _limpiarCodigo(String code) {
     return code
         .replaceAll(']C1', '')
@@ -59,12 +46,10 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
         .trim();
   }
 
-  // ── REGISTRAR ACTIVIDAD ──────────────────────────────────────────────────
   void _registrarActividad() {
     if (mounted) ref.read(kioskProvider).registerActivity();
   }
 
-  // ── Acceso al notifier (lógica) y al state (UI) ──────────────────────────
   TraspasoNotifier get _notifier => ref.read(traspasoProvider.notifier);
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -77,7 +62,6 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
     _codigo.clear();
     _registrarActividad();
 
-    // Leer disponibles del notifier (no depende del ciclo de build)
     if (_notifier.disponibles <= 0) {
       alertaError(
         context,
@@ -98,8 +82,14 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
       if (!mounted) return;
 
       if (res['status'] == 'ok') {
-        final libro       = Map<String, dynamic>.from(res['data']);
-        final codigoLibro = libro['codigo'] as String? ?? codigo;
+        final producto = res['producto'];
+        if (producto == null) {
+          _mostrarDialogoNoEncontrado(codigo);
+          return;
+        }
+
+        final libro       = Map<String, dynamic>.from(producto as Map);
+        final codigoLibro = libro['codigo']?.toString() ?? codigo;
 
         if (_notifier.existe(codigoLibro)) {
           _mostrarDialogoYaExiste(libro);
@@ -109,9 +99,10 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
       } else {
         _mostrarDialogoNoEncontrado(codigo);
       }
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       alertaError(context, 'Error de conexión');
+      debugPrint('Error escanear: $e');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -122,7 +113,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
   // ─────────────────────────────────────────────────────────────────────────
   void _mostrarDialogoYaExiste(Map<String, dynamic> libro) {
     final notifier   = _notifier;
-    final idx        = notifier.indexOf(libro['codigo'] as String? ?? '');
+    final idx        = notifier.indexOf(libro['codigo']?.toString() ?? '');
     final cantActual = idx != -1
         ? (notifier.items[idx]['cantidad'] as int? ?? 0)
         : 0;
@@ -146,7 +137,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              libro['descripcion'] ?? libro['codigo'] ?? '-',
+              libro['descripcion']?.toString() ?? libro['codigo']?.toString() ?? '-',
               style: const TextStyle(
                   color: Colors.white,
                   fontSize: 13,
@@ -194,7 +185,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // DIÁLOGO: ingresar cantidad para agregar
+  // DIÁLOGO: ingresar cantidad
   // ─────────────────────────────────────────────────────────────────────────
   void _mostrarDialogoCantidad(Map<String, dynamic> libro,
       {required bool esNuevo}) {
@@ -233,7 +224,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                libro['descripcion'] ?? libro['codigo'] ?? '-',
+                libro['descripcion']?.toString() ?? libro['codigo']?.toString() ?? '-',
                 style: const TextStyle(
                     color: Colors.white,
                     fontSize: 13,
@@ -243,15 +234,13 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
               ),
               const SizedBox(height: 4),
               Text(
-                libro['codigo'] ?? '',
-                style:
-                    const TextStyle(color: Color(0xFF888888), fontSize: 11),
+                libro['codigo']?.toString() ?? '',
+                style: const TextStyle(color: Color(0xFF888888), fontSize: 11),
               ),
               const SizedBox(height: 16),
               Text(
                 'Cantidad (máx. disponible: $disponibles)',
-                style:
-                    const TextStyle(color: Color(0xFFBBBBBB), fontSize: 12),
+                style: const TextStyle(color: Color(0xFFBBBBBB), fontSize: 12),
               ),
               const SizedBox(height: 8),
               TextField(
@@ -307,8 +296,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10)),
               ),
-              onPressed: () =>
-                  _confirmarCantidad(ctx, libro, valorCantidad),
+              onPressed: () => _confirmarCantidad(ctx, libro, valorCantidad),
             ),
           ],
         ),
@@ -337,7 +325,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // DIÁLOGO: libro no encontrado → guardar manualmente
+  // DIÁLOGO: libro no encontrado → ingresar manualmente
   // ─────────────────────────────────────────────────────────────────────────
   void _mostrarDialogoNoEncontrado(String codigo) {
     if (_notifier.existe(codigo)) {
@@ -362,8 +350,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
                   color: Color(0xFFFFA726), size: 22),
               SizedBox(width: 8),
               Expanded(
-                child:
-                    Text('No encontrado', style: TextStyle(fontSize: 15)),
+                child: Text('No encontrado', style: TextStyle(fontSize: 15)),
               ),
             ],
           ),
@@ -387,8 +374,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
               const SizedBox(height: 14),
               const Text(
                 'Ingresa el nombre del libro\npara guardarlo en la base de datos:',
-                style:
-                    TextStyle(color: Color(0xFFBBBBBB), fontSize: 12),
+                style: TextStyle(color: Color(0xFFBBBBBB), fontSize: 12),
               ),
               const SizedBox(height: 10),
               TextField(
@@ -397,8 +383,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
                   hintText: 'Descripción del libro...',
-                  hintStyle:
-                      const TextStyle(color: Color(0xFF555555)),
+                  hintStyle: const TextStyle(color: Color(0xFF555555)),
                   filled: true,
                   fillColor: const Color(0xFF242424),
                   border: OutlineInputBorder(
@@ -434,8 +419,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
             ElevatedButton.icon(
               icon: guardando
                   ? const SizedBox(
-                      width: 14,
-                      height: 14,
+                      width: 14, height: 14,
                       child: CircularProgressIndicator(
                           strokeWidth: 2, color: Colors.white))
                   : const Icon(Icons.save_rounded, size: 16),
@@ -499,7 +483,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // CONFIRMAR TRASPASO
+  // CONFIRMAR TRASPASO  ← ÚNICO CAMBIO: obtiene deviceId antes de navegar
   // ─────────────────────────────────────────────────────────────────────────
   Future<void> _confirmarTraspaso() async {
     final notifier = _notifier;
@@ -525,16 +509,24 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
             notifier.setNumeroMovimiento(
                 res['numero_movimiento'].toString());
           }
+
+          // ✅ CORREGIDO: obtenemos el deviceId aquí, cuando la red ya funcionó,
+          // y lo pasamos a FacturaScreen para que no haga ninguna llamada de red.
+          final deviceId = await DeviceService().getDeviceId();
+          if (!mounted) return;
+
           alertaExito(
             context,
             '¡Traspaso hecho!',
             onOk: () => Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => const FacturaScreen()),
+              MaterialPageRoute(
+                builder: (_) => FacturaScreen(deviceId: deviceId),
+              ),
             ),
           );
         } else {
-          alertaError(context, res['mensaje'] ?? 'Error al registrar');
+          alertaError(context, res['message'] ?? res['mensaje'] ?? 'Error al registrar');
         }
       } catch (_) {
         if (!mounted) return;
@@ -544,7 +536,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // EDITAR CANTIDAD DE UN ITEM
+  // EDITAR CANTIDAD
   // ─────────────────────────────────────────────────────────────────────────
   void _editarCantidad(
       BuildContext context, int i, Map<String, dynamic> item) {
@@ -569,7 +561,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                item['descripcion'] ?? item['codigo'] ?? '-',
+                item['descripcion']?.toString() ?? item['codigo']?.toString() ?? '-',
                 style: const TextStyle(
                     color: Color(0xFF888888), fontSize: 12),
                 maxLines: 2,
@@ -656,8 +648,12 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
   // ─────────────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    // ref.watch devuelve TraspasoState → úsalo solo para leer datos de UI
     final state = ref.watch(traspasoProvider);
+
+    final origenAlmacen  = state.origen?['Codigo_Almacen']  ?? state.origen?['almacen']  ?? '-';
+    final origenStand    = state.origen?['Stand']            ?? state.origen?['stand']    ?? '-';
+    final destinoAlmacen = state.destino?['Codigo_Almacen'] ?? state.destino?['almacen'] ?? '-';
+    final destinoStand   = state.destino?['Stand']           ?? state.destino?['stand']   ?? '-';
 
     return Scaffold(
       resizeToAvoidBottomInset: false,
@@ -673,7 +669,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
                 Expanded(
                   child: _chip(
                     'Origen',
-                    '${state.origen?['almacen'] ?? '-'} · Stand ${state.origen?['stand'] ?? '-'}',
+                    '$origenAlmacen · Stand $origenStand',
                     Icons.logout_rounded,
                   ),
                 ),
@@ -681,7 +677,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
                 Expanded(
                   child: _chip(
                     'Destino',
-                    '${state.destino?['almacen'] ?? '-'} · Stand ${state.destino?['stand'] ?? '-'}',
+                    '$destinoAlmacen · Stand $destinoStand',
                     Icons.login_rounded,
                   ),
                 ),
@@ -740,8 +736,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
             // ── TOTALES ────────────────────────────────────────────────
             Container(
               width: double.infinity,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               decoration: BoxDecoration(
                 color: const Color(0xFF0D1B2A),
                 borderRadius: BorderRadius.circular(10),
@@ -756,10 +751,8 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
                     children: [
                       if (_loading)
                         const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child:
-                              CircularProgressIndicator(strokeWidth: 2),
+                          width: 16, height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       else
                         const Icon(Icons.library_books_rounded,
@@ -806,8 +799,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
                           Icon(
                             Icons.qr_code_scanner_rounded,
                             size: 56,
-                            color: const Color(0xFF1565C0)
-                                .withValues(alpha: 0.4),
+                            color: const Color(0xFF1565C0).withValues(alpha: 0.4),
                           ),
                           const SizedBox(height: 12),
                           const Text(
@@ -820,8 +812,8 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
                     )
                   : ListView.separated(
                       itemCount: state.items.length,
-                      separatorBuilder: (_, __) => const Divider(
-                          color: Color(0xFF242424), height: 1),
+                      separatorBuilder: (_, __) =>
+                          const Divider(color: Color(0xFF242424), height: 1),
                       itemBuilder: (context, i) {
                         final item     = state.items[i];
                         final esManual = item['manual'] == true;
@@ -830,14 +822,11 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
                           contentPadding: const EdgeInsets.symmetric(
                               horizontal: 6, vertical: 2),
                           leading: Container(
-                            width: 36,
-                            height: 36,
+                            width: 36, height: 36,
                             decoration: BoxDecoration(
                               color: esManual
-                                  ? const Color(0xFF4A1080)
-                                      .withValues(alpha: 0.25)
-                                  : const Color(0xFF0D47A1)
-                                      .withValues(alpha: 0.25),
+                                  ? const Color(0xFF4A1080).withValues(alpha: 0.25)
+                                  : const Color(0xFF0D47A1).withValues(alpha: 0.25),
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Icon(
@@ -851,7 +840,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
                             ),
                           ),
                           title: Text(
-                            item['descripcion'] ?? item['codigo'] ?? '-',
+                            item['descripcion']?.toString() ?? item['codigo']?.toString() ?? '-',
                             style: const TextStyle(
                                 color: Colors.white, fontSize: 13),
                             maxLines: 1,
@@ -860,10 +849,9 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
                           subtitle: Row(
                             children: [
                               Text(
-                                item['codigo'] ?? '',
+                                item['codigo']?.toString() ?? '',
                                 style: const TextStyle(
-                                    color: Color(0xFF888888),
-                                    fontSize: 11),
+                                    color: Color(0xFF888888), fontSize: 11),
                               ),
                               if (esManual) ...[
                                 const SizedBox(width: 6),
@@ -873,8 +861,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
                                   decoration: BoxDecoration(
                                     color: const Color(0xFF4A1080)
                                         .withValues(alpha: 0.35),
-                                    borderRadius:
-                                        BorderRadius.circular(4),
+                                    borderRadius: BorderRadius.circular(4),
                                   ),
                                   child: const Text(
                                     'nuevo',
@@ -889,7 +876,6 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              // Botón editar cantidad
                               GestureDetector(
                                 onTap: () =>
                                     _editarCantidad(context, i, item),
@@ -899,8 +885,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
                                   decoration: BoxDecoration(
                                     color: const Color(0xFF0D47A1)
                                         .withValues(alpha: 0.3),
-                                    borderRadius:
-                                        BorderRadius.circular(8),
+                                    borderRadius: BorderRadius.circular(8),
                                     border: Border.all(
                                       color: const Color(0xFF1565C0)
                                           .withValues(alpha: 0.4),
@@ -924,7 +909,6 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
                                   ),
                                 ),
                               ),
-                              // Botón eliminar item
                               IconButton(
                                 icon: const Icon(Icons.delete_outline,
                                     color: Color(0xFFCF6679), size: 20),
@@ -969,7 +953,6 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
     );
   }
 
-  // ── CHIP ORIGEN / DESTINO ────────────────────────────────────────────────
   Widget _chip(String label, String value, IconData icon) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -1006,7 +989,6 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
   }
 }
 
-// ── FORMATTER: limita valor máximo dinámico ──────────────────────────────────
 class _MaxValueFormatter extends TextInputFormatter {
   final int max;
   const _MaxValueFormatter(this.max);

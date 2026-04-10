@@ -1,4 +1,9 @@
 // lib/main.dart
+//
+// Cambios respecto a la versión anterior:
+// 1. Se inicializa SyncLogService en el arranque (antes del sync inicial).
+// 2. SincronizarCompleto() ya no necesita botón — ConnectivityService
+//    lo llama al detectar internet y en el polling de 30 s.
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,6 +16,7 @@ import 'core/pdf_fonts.dart';
 import 'core/connectivity_service.dart';
 import 'core/device_service.dart';
 import 'services/sync_service.dart';
+import 'services/sync_log_service.dart';   // ← NUEVO
 import 'screens/login_screen.dart';
 import 'screens/init_screen.dart';
 import 'widgets/kiosk_wrapper.dart';
@@ -21,10 +27,15 @@ Future<void> main() async {
   final binding = WidgetsFlutterBinding.ensureInitialized();
   FlutterNativeSplash.preserve(widgetsBinding: binding);
 
-  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+  ]);
+
+  // ── Inicializar servicios en paralelo ────────────────────────────────────
   await Future.wait([
     PdfFonts.load(),
-    ConnectivityService().init(),
+    SyncLogService().init(),          // ← NUEVO: crea tabla y carga historial
+    ConnectivityService().init(),     // ya dispara sincronizarCompleto si hay red
   ]);
 
   final inicializado = await DeviceService().estaInicializado();
@@ -45,6 +56,11 @@ class MyApp extends ConsumerStatefulWidget {
 }
 
 class _MyAppState extends ConsumerState<MyApp> {
+  // ConnectivityService ya llamó sincronizarCompleto() al init() si había red.
+  // Aquí hacemos un intento adicional post-frame por si el init fue muy rápido
+  // y la interfaz aún no estaba lista.
+  bool _syncInicialHecho = false;
+
   @override
   void initState() {
     super.initState();
@@ -52,8 +68,6 @@ class _MyAppState extends ConsumerState<MyApp> {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final kiosk = ref.read(kioskProvider);
 
-      // ✅ PRIMERO asignar onTimeout, LUEGO restaurar estado
-      // Así si el kiosko estaba activo, el timer ya tiene su callback
       kiosk.onTimeout = () {
         navigatorKey.currentState?.pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const LoginScreen()),
@@ -62,8 +76,14 @@ class _MyAppState extends ConsumerState<MyApp> {
       };
 
       try {
-        await kiosk.cargarEstadoPersistido(); // ← ahora onTimeout ya existe
-        await SyncService.sincronizarCompleto();
+        await kiosk.cargarEstadoPersistido();
+
+        // Solo ejecuta si ConnectivityService no lo hizo ya
+        if (!_syncInicialHecho) {
+          _syncInicialHecho = true;
+          // Fire-and-forget: no bloquea el splash
+          SyncService.sincronizarCompleto().ignore();
+        }
       } catch (e) {
         debugPrint('Error inicialización: $e');
       } finally {
@@ -75,12 +95,14 @@ class _MyAppState extends ConsumerState<MyApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Traspasos Planeta',
+      title                   : 'Traspasos Planeta',
       debugShowCheckedModeBanner: false,
-      navigatorKey: navigatorKey,
-      theme: appTheme,
-      builder: (context, child) => KioskWrapper(child: child!),
-      home: widget.inicializado ? const LoginScreen() : const InitScreen(),
+      navigatorKey            : navigatorKey,
+      theme                   : appTheme,
+      builder                 : (context, child) => KioskWrapper(child: child!),
+      home                    : widget.inicializado
+          ? const LoginScreen()
+          : const InitScreen(),
     );
   }
 }

@@ -1,5 +1,4 @@
 ﻿// lib/screens/destino_screen.dart
-// ─────────────────────────────────────────────────────────────────────────────
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,7 +8,7 @@ import '../services/api_service.dart';
 import '../widgets/campo_codigo.dart';
 import '../widgets/alerts.dart';
 import 'lineas_screen.dart';
-import '../main.dart'; // Para acceder a kioskProvider
+import '../main.dart';
 
 class DestinoScreen extends ConsumerStatefulWidget {
   const DestinoScreen({super.key});
@@ -28,7 +27,6 @@ class _DestinoScreenState extends ConsumerState<DestinoScreen> {
     super.dispose();
   }
 
-  // 🔹 LIMPIEZA
   String _limpiarCodigo(String code) {
     return code
         .replaceAll(']C1', '')
@@ -37,8 +35,12 @@ class _DestinoScreenState extends ConsumerState<DestinoScreen> {
         .trim();
   }
 
-  // 🔹 CARD INFO
   Widget _infoCard(String titulo, Map<String, dynamic> data) {
+    // ✅ CORREGIDO: las claves tienen mayúscula — Codigo_Almacen y Stand
+    final almacen = data['Codigo_Almacen'] ?? data['almacen'] ?? '-';
+    final stand   = data['Stand']          ?? data['stand']   ?? '-';
+    final nombre  = data['Nombre_UsuarioT']                   ?? '';
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
@@ -46,7 +48,7 @@ class _DestinoScreenState extends ConsumerState<DestinoScreen> {
         color: const Color(0xFF0D1B2A),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: const Color(0xFF1565C0)..withValues(alpha: 0.5),
+          color: const Color(0xFF1565C0).withValues(alpha: 0.5),
         ),
       ),
       child: Column(
@@ -60,15 +62,23 @@ class _DestinoScreenState extends ConsumerState<DestinoScreen> {
             ),
           ),
           const SizedBox(height: 8),
+          if (nombre.isNotEmpty)
+            Text(
+              '👤 $nombre',
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           Text(
-            '🏪 Almacén: ${data['almacen'] ?? '-'}',
+            '🏪 Almacén: $almacen',
             style: const TextStyle(
               color: Colors.white,
               fontWeight: FontWeight.w600,
             ),
           ),
           Text(
-            '📍 Stand: ${data['stand'] ?? '-'}',
+            '📍 Stand: $stand',
             style: const TextStyle(color: Color(0xFFB0BEC5)),
           ),
         ],
@@ -76,7 +86,6 @@ class _DestinoScreenState extends ConsumerState<DestinoScreen> {
     );
   }
 
-  // 🔹 VALIDACIÓN
   Future<void> _validar() async {
     final claveLimpia = _limpiarCodigo(_clave.text);
 
@@ -86,7 +95,6 @@ class _DestinoScreenState extends ConsumerState<DestinoScreen> {
     }
 
     ref.read(kioskProvider).registerActivity();
-
     setState(() => _loading = true);
 
     try {
@@ -94,11 +102,12 @@ class _DestinoScreenState extends ConsumerState<DestinoScreen> {
       if (!mounted) return;
 
       if (res['status'] == 'ok') {
-        final state = ref.read(traspasoProvider);
-        final data = res['data'] as Map<String, dynamic>;
-        final origen = state.origen;
+        final data   = res['data'] as Map<String, dynamic>;
+        final origen = ref.read(traspasoProvider).origen;
 
-        if (origen != null && data['stand'] == origen['stand']) {
+        // ✅ CORREGIDO: comparar con 'Stand' (mayúscula)
+        if (origen != null &&
+            data['Stand']?.toString() == origen['Stand']?.toString()) {
           alertaError(
             context,
             'El destino debe ser un stand diferente al origen',
@@ -107,10 +116,10 @@ class _DestinoScreenState extends ConsumerState<DestinoScreen> {
           return;
         }
 
-        // ✅ CORREGIDO: Acceder al notifier
         ref.read(traspasoProvider.notifier).setDestino(data);
       } else {
-        alertaError(context, res['mensaje'] ?? 'Error desconocido');
+        // ✅ CORREGIDO: era res['mensaje'], debe ser res['message']
+        alertaError(context, res['message'] ?? 'Error desconocido');
       }
     } catch (e) {
       if (!mounted) return;
@@ -121,13 +130,11 @@ class _DestinoScreenState extends ConsumerState<DestinoScreen> {
     }
   }
 
-  // 🔹 CANCELAR
   void _cancelar() {
     alertaConfirmar(
       context,
       '¿Seguro que deseas cancelar?',
       () {
-        // ✅ CORREGIDO: Acceder al notifier
         ref.read(traspasoProvider.notifier).limpiar();
         Navigator.popUntil(context, (r) => r.isFirst);
       },
@@ -136,7 +143,7 @@ class _DestinoScreenState extends ConsumerState<DestinoScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final prov = ref.watch(traspasoProvider);
+    final prov        = ref.watch(traspasoProvider);
     final destinoListo = prov.destino != null;
 
     return Scaffold(
@@ -146,34 +153,26 @@ class _DestinoScreenState extends ConsumerState<DestinoScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // 🔹 ORIGEN
             if (prov.origen != null) _infoCard('Origen', prov.origen!),
             const SizedBox(height: 24),
 
-            // 🔹 FORM
             if (!destinoListo) ...[
               const Icon(Icons.person_search_rounded,
                   size: 48, color: Color(0xFF42A5F5)),
-
               const SizedBox(height: 8),
-
               const Text(
                 'Escanea el usuario destino',
                 style: TextStyle(color: Color(0xFF90CAF9)),
                 textAlign: TextAlign.center,
               ),
-
               const SizedBox(height: 20),
-
               CampoCodigo(
                 controller: _clave,
                 label: 'Clave Secreta (código de barras)',
                 ocultable: true,
                 onSubmitted: (_) => _validar(),
               ),
-
               const SizedBox(height: 20),
-
               SizedBox(
                 height: 55,
                 child: _loading
@@ -190,11 +189,9 @@ class _DestinoScreenState extends ConsumerState<DestinoScreen> {
               ),
             ],
 
-            // 🔹 DESTINO OK
             if (destinoListo) ...[
               _infoCard('Destino', prov.destino!),
               const SizedBox(height: 24),
-
               Row(
                 children: [
                   Expanded(
@@ -208,9 +205,7 @@ class _DestinoScreenState extends ConsumerState<DestinoScreen> {
                       onPressed: _cancelar,
                     ),
                   ),
-
                   const SizedBox(width: 12),
-
                   Expanded(
                     child: ElevatedButton.icon(
                       icon: const Icon(Icons.arrow_forward_rounded),

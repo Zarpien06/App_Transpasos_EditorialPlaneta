@@ -1,5 +1,6 @@
 // lib/core/database_service.dart
 
+import 'dart:convert';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 
@@ -18,10 +19,10 @@ class DatabaseService {
 
   Future<Database> _initDB() async {
     final dbPath = await getDatabasesPath();
-    final path = join(dbPath, 'feria_traspasos.db');
+    final path   = join(dbPath, 'feria_traspasos.db');
     return await openDatabase(
       path,
-      version: 2,           // ← subimos versión para onUpgrade
+      version: 4,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -43,7 +44,7 @@ class DatabaseService {
         origen_json      TEXT,
         destino_json     TEXT,
         estado           TEXT    DEFAULT 'en_proceso',
-        num_movimiento   INTEGER,
+        num_movimiento   TEXT,
         fecha_creacion   TEXT,
         fecha_sync       TEXT,
         error_msg        TEXT
@@ -70,16 +71,47 @@ class DatabaseService {
       )
     ''');
 
-    // ✅ NUEVAS TABLAS
     await _crearTablaAdmin(db);
     await _crearTablaProductos(db);
+    await _crearTablaUsuariosTranspasos(db);
   }
 
-  // onUpgrade para dispositivos que ya tienen v1 instalada
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
       await _crearTablaAdmin(db);
       await _crearTablaProductos(db);
+    }
+    if (oldVersion < 3) {
+      await _crearTablaUsuariosTranspasos(db);
+    }
+    if (oldVersion < 4) {
+      await db.execute(
+        'ALTER TABLE traspasos_local RENAME TO traspasos_local_v3',
+      );
+      await db.execute('''
+        CREATE TABLE traspasos_local (
+          id               INTEGER PRIMARY KEY AUTOINCREMENT,
+          local_uuid       TEXT    NOT NULL UNIQUE,
+          device_id        TEXT    NOT NULL,
+          origen_json      TEXT,
+          destino_json     TEXT,
+          estado           TEXT    DEFAULT 'en_proceso',
+          num_movimiento   TEXT,
+          fecha_creacion   TEXT,
+          fecha_sync       TEXT,
+          error_msg        TEXT
+        )
+      ''');
+      await db.execute('''
+        INSERT INTO traspasos_local
+          (id, local_uuid, device_id, origen_json, destino_json,
+           estado, num_movimiento, fecha_creacion, fecha_sync, error_msg)
+        SELECT
+          id, local_uuid, device_id, origen_json, destino_json,
+          estado, CAST(num_movimiento AS TEXT), fecha_creacion, fecha_sync, error_msg
+        FROM traspasos_local_v3
+      ''');
+      await db.execute('DROP TABLE traspasos_local_v3');
     }
   }
 
@@ -110,6 +142,26 @@ class DatabaseService {
     ''');
   }
 
+  Future<void> _crearTablaUsuariosTranspasos(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS usuarios_transpasos_local (
+        Cod_UsuarioT    INTEGER PRIMARY KEY,
+        Nombre_UsuarioT TEXT,
+        Clave_UsuarioT  TEXT    NOT NULL,
+        Codigo_Almacen  TEXT,
+        Stand           TEXT,
+        Empresa         TEXT,
+        Actividad       TEXT,
+        Estado_UsuarioT INTEGER DEFAULT 1
+      )
+    ''');
+
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS idx_clave_usuariot
+      ON usuarios_transpasos_local (Clave_UsuarioT)
+    ''');
+  }
+
   // ════════════════════════════════════════════════════════════════════════════
   // CONFIG
   // ════════════════════════════════════════════════════════════════════════════
@@ -121,17 +173,49 @@ class DatabaseService {
   }
 
   Future<String?> getConfig(String clave) async {
-    final db = await database;
+    final db   = await database;
     final rows = await db.query('config', where: 'clave = ?', whereArgs: [clave]);
     if (rows.isEmpty) return null;
     return rows.first['valor'] as String?;
   }
+  
+  // ─────────────────────────────────────────────
+  // CONSECUTIVO POR DISPOSITIVO (manuma)
+  // ─────────────────────────────────────────────
+  Future<int> getNextManuma(String deviceId) async {
+  final db = await database;
+  final clave = 'contador_$deviceId';
+
+  return await db.transaction((txn) async {
+    final rows = await txn.query(
+      'config',
+      where: 'clave = ?',
+      whereArgs: [clave],
+      limit: 1,
+    );
+
+    int actual = 0;
+
+    if (rows.isNotEmpty) {
+      actual = int.tryParse(rows.first['valor'].toString()) ?? 0;
+    }
+
+    final siguiente = actual + 1;
+
+    await txn.insert(
+      'config',
+      {'clave': clave, 'valor': siguiente.toString()},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+
+    return siguiente;
+   });
+   }
 
   // ════════════════════════════════════════════════════════════════════════════
-  // ADMIN LOCAL — guardar y validar sin internet
+  // ADMIN LOCAL
   // ════════════════════════════════════════════════════════════════════════════
 
-  /// Guarda/actualiza las credenciales del admin descargadas del servidor
   Future<void> guardarAdminLocal(String usuario, String password) async {
     final db = await database;
     await db.insert(
@@ -141,9 +225,8 @@ class DatabaseService {
     );
   }
 
-  /// Valida credenciales contra la BD local (sin internet)
   Future<bool> validarAdminLocal(String usuario, String password) async {
-    final db = await database;
+    final db   = await database;
     final rows = await db.query(
       'admin_local',
       where: 'usuario = ? AND password = ?',
@@ -152,9 +235,8 @@ class DatabaseService {
     return rows.isNotEmpty;
   }
 
-  /// Devuelve los datos del admin local (para el dashboard)
   Future<Map<String, dynamic>?> getAdminLocal(String usuario) async {
-    final db = await database;
+    final db   = await database;
     final rows = await db.query(
       'admin_local',
       where: 'usuario = ?',
@@ -164,27 +246,78 @@ class DatabaseService {
   }
 
   // ════════════════════════════════════════════════════════════════════════════
+  // USUARIOS TRANSPASOS LOCAL
+  // ════════════════════════════════════════════════════════════════════════════
+
+  Future<void> guardarUsuariosTranspasos(
+      List<Map<String, dynamic>> usuarios) async {
+    final db    = await database;
+    final batch = db.batch();
+    batch.delete('usuarios_transpasos_local');
+    for (final u in usuarios) {
+      batch.insert(
+        'usuarios_transpasos_local',
+        {
+          'Cod_UsuarioT'    : u['Cod_UsuarioT'],
+          'Nombre_UsuarioT' : u['Nombre_UsuarioT'],
+          'Clave_UsuarioT'  : u['Clave_UsuarioT']?.toString().trim(),
+          'Codigo_Almacen'  : u['Codigo_Almacen'],
+          'Stand'           : u['Stand'],
+          'Empresa'         : u['Empresa'],
+          'Actividad'       : u['Actividad'],
+          'Estado_UsuarioT' : u['Estado_UsuarioT'],
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+    await batch.commit(noResult: true);
+  }
+
+  Future<Map<String, dynamic>?> buscarUsuarioPorClave(String clave) async {
+    final db   = await database;
+    final rows = await db.query(
+      'usuarios_transpasos_local',
+      where: 'Clave_UsuarioT = ? AND Estado_UsuarioT = 1',
+      whereArgs: [clave],
+      limit: 1,
+    );
+    return rows.isNotEmpty ? rows.first : null;
+  }
+
+  Future<List<Map<String, dynamic>>> getTodosUsuariosTranspasos() async {
+    final db = await database;
+    return await db.query(
+      'usuarios_transpasos_local',
+      where: 'Estado_UsuarioT = 1',
+      orderBy: 'Nombre_UsuarioT ASC',
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
   // PRODUCTOS LOCAL
   // ════════════════════════════════════════════════════════════════════════════
 
-  /// Reemplaza todos los productos con los descargados del servidor
   Future<void> guardarProductos(List<Map<String, dynamic>> productos) async {
-    final db = await database;
+    final db    = await database;
     final batch = db.batch();
-    batch.delete('productos_local'); // limpiar antes de insertar
+    batch.delete('productos_local');
     for (final p in productos) {
-      batch.insert('productos_local', {
-        'id':              p['id'],
-        'ISBN':            p['ISBN'],
-        'EAN':             p['EAN'],
-        'Referencia':      p['Referencia'],
-        'Desc_Referencia': p['Desc_Referencia'],
-        'Precio':          p['Precio'],
-        'Cantidad':        p['Cantidad'],
-        'Autor':           p['Autor'],
-        'Sello_Editorial': p['Sello_Editorial'],
-        'Familia':         p['Familia'],
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      batch.insert(
+        'productos_local',
+        {
+          'id'             : p['id'],
+          'ISBN'           : p['ISBN'],
+          'EAN'            : p['EAN'],
+          'Referencia'     : p['Referencia'],
+          'Desc_Referencia': p['Desc_Referencia'],
+          'Precio'         : p['Precio'],
+          'Cantidad'       : p['Cantidad'],
+          'Autor'          : p['Autor'],
+          'Sello_Editorial': p['Sello_Editorial'],
+          'Familia'        : p['Familia'],
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
     }
     await batch.commit(noResult: true);
   }
@@ -198,24 +331,44 @@ class DatabaseService {
   // TRASPASOS
   // ════════════════════════════════════════════════════════════════════════════
 
+  /// Inserta un traspaso y retorna el id autoincrement generado por SQLite.
+  /// Ese id es el número corto que se muestra en el ticket (1, 2, 3…).
+  Future<int> insertarTraspasoReturnId(Map<String, dynamic> datos) async {
+  final db = await database;
+
+   if (!datos.containsKey('device_id')) {
+     throw Exception('device_id es obligatorio');
+   }
+ 
+   final id = await db.insert(
+     'traspasos_local',
+     datos,
+     conflictAlgorithm: ConflictAlgorithm.replace,
+   );
+ 
+    return id;
+   }
+
+  /// Mantiene compatibilidad con código que no necesita el id de retorno.
   Future<void> insertarTraspaso(Map<String, dynamic> datos) async {
-    final db = await database;
-    await db.insert('traspasos_local', datos,
-        conflictAlgorithm: ConflictAlgorithm.ignore);
+    await insertarTraspasoReturnId(datos);
   }
 
-  Future<void> actualizarTraspaso(String uuid, Map<String, dynamic> cambios) async {
+  Future<void> actualizarTraspaso(
+      String uuid, Map<String, dynamic> cambios) async {
     final db = await database;
     await db.update('traspasos_local', cambios,
         where: 'local_uuid = ?', whereArgs: [uuid]);
   }
 
   Future<Map<String, dynamic>?> getTraspasoEnProceso() async {
-    final db = await database;
-    final rows = await db.query('traspasos_local',
-        where: "estado = 'en_proceso'",
-        orderBy: 'fecha_creacion DESC',
-        limit: 1);
+    final db   = await database;
+    final rows = await db.query(
+      'traspasos_local',
+      where: "estado = 'en_proceso'",
+      orderBy: 'fecha_creacion DESC',
+      limit: 1,
+    );
     return rows.isEmpty ? null : rows.first;
   }
 
@@ -231,12 +384,74 @@ class DatabaseService {
   }
 
   // ════════════════════════════════════════════════════════════════════════════
+  // LOG DE TRASPASOS — para el panel admin
+  // ════════════════════════════════════════════════════════════════════════════
+
+  /// Devuelve los últimos [limite] traspasos (todos los estados) con sus
+  /// líneas decodificadas y conteos. Usado por el log del admin dashboard.
+  Future<List<Map<String, dynamic>>> getUltimosTraspasos({int limite = 30}) async {
+    final db = await database;
+
+    final traspasos = await db.query(
+      'traspasos_local',
+      orderBy: 'id DESC',
+      limit: limite,
+    );
+
+    final resultado = <Map<String, dynamic>>[];
+
+    for (final t in traspasos) {
+      final uuid = t['local_uuid'] as String;
+
+      // Contar líneas y sumar cantidades
+      final lineas = await db.query(
+        'lineas_local',
+        where: 'traspaso_uuid = ?',
+        whereArgs: [uuid],
+      );
+
+      final totalLibros = lineas.fold<int>(
+        0, (sum, l) => sum + ((l['cantidad'] as int?) ?? 0));
+
+      Map<String, dynamic> origen  = {};
+      Map<String, dynamic> destino = {};
+      try {
+        origen  = Map<String, dynamic>.from(
+            jsonDecode(t['origen_json']  as String? ?? '{}'));
+        destino = Map<String, dynamic>.from(
+            jsonDecode(t['destino_json'] as String? ?? '{}'));
+      } catch (_) {}
+
+      resultado.add({
+        'id'             : t['id'],
+        'local_uuid'     : uuid,
+        'estado'         : t['estado'] ?? 'pendiente',
+        'fecha_creacion' : t['fecha_creacion'] ?? '',
+        'fecha_sync'     : t['fecha_sync'],
+        'num_refs'       : lineas.length,
+        'total_libros'   : totalLibros,
+        'origen_almacen' : origen['Codigo_Almacen'] ?? '—',
+        'origen_stand'   : origen['Stand']?.toString() ?? '—',
+        'destino_almacen': destino['Codigo_Almacen'] ?? '—',
+        'destino_stand'  : destino['Stand']?.toString() ?? '—',
+        'lineas'         : lineas,
+      });
+    }
+
+    return resultado;
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
   // LÍNEAS
   // ════════════════════════════════════════════════════════════════════════════
 
   Future<void> insertarLinea(Map<String, dynamic> linea) async {
     final db = await database;
-    await db.insert('lineas_local', linea);
+    await db.insert(
+      'lineas_local',
+      linea,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
   }
 
   Future<void> actualizarCantidadLinea(int id, int cantidad) async {
@@ -250,7 +465,8 @@ class DatabaseService {
     await db.delete('lineas_local', where: 'id = ?', whereArgs: [id]);
   }
 
-  Future<List<Map<String, dynamic>>> getLineasDeTraspaso(String traspasoUuid) async {
+  Future<List<Map<String, dynamic>>> getLineasDeTraspaso(
+      String traspasoUuid) async {
     final db = await database;
     return await db.query('lineas_local',
         where: 'traspaso_uuid = ?', whereArgs: [traspasoUuid]);
@@ -262,25 +478,107 @@ class DatabaseService {
 
   Future<void> encolarSync(String uuid) async {
     final db = await database;
-    await db.insert('sync_queue',
-        {'traspaso_uuid': uuid, 'intentos': 0, 'creado': DateTime.now().toIso8601String()},
-        conflictAlgorithm: ConflictAlgorithm.ignore);
+    await db.insert(
+      'sync_queue',
+      {
+        'traspaso_uuid': uuid,
+        'intentos'     : 0,
+        'creado'       : DateTime.now().toIso8601String(),
+      },
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
   }
 
   Future<void> incrementarIntento(String uuid, String error) async {
     final db = await database;
     await db.rawUpdate(
-        'UPDATE sync_queue SET intentos = intentos + 1, ultimo_error = ? WHERE traspaso_uuid = ?',
-        [error, uuid]);
+      'UPDATE sync_queue SET intentos = intentos + 1, ultimo_error = ? '
+      'WHERE traspaso_uuid = ?',
+      [error, uuid],
+    );
   }
 
   Future<void> eliminarDeQueue(String uuid) async {
     final db = await database;
-    await db.delete('sync_queue', where: 'traspaso_uuid = ?', whereArgs: [uuid]);
+    await db.delete('sync_queue',
+        where: 'traspaso_uuid = ?', whereArgs: [uuid]);
   }
 
   Future<List<Map<String, dynamic>>> getQueue() async {
     final db = await database;
     return await db.query('sync_queue', orderBy: 'creado ASC');
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // SYNC — SUBIDA A NUBE
+  // ════════════════════════════════════════════════════════════════════════════
+
+  Future<List<Map<String, dynamic>>> getTraspasosPendientesConLineas() async {
+    final db        = await database;
+    final traspasos = await db.query(
+      'traspasos_local',
+      where: "estado = 'pendiente'",
+      orderBy: 'fecha_creacion ASC',
+    );
+
+    final resultado = <Map<String, dynamic>>[];
+
+    for (final t in traspasos) {
+      final uuid   = t['local_uuid'] as String;
+      final lineas = await db.query(
+        'lineas_local',
+        where: 'traspaso_uuid = ?',
+        whereArgs: [uuid],
+      );
+
+      Map<String, dynamic> origen  = {};
+      Map<String, dynamic> destino = {};
+      try {
+        origen  = Map<String, dynamic>.from(
+            jsonDecode(t['origen_json']  as String? ?? '{}'));
+        destino = Map<String, dynamic>.from(
+            jsonDecode(t['destino_json'] as String? ?? '{}'));
+      } catch (_) {}
+
+      resultado.add({
+        ...t,
+        'origen_decoded' : origen,
+        'destino_decoded': destino,
+        'lineas'         : lineas,
+      });
+    }
+
+    return resultado;
+  }
+
+  Future<void> marcarTraspasosSincronizados(List<String> uuids) async {
+    if (uuids.isEmpty) return;
+    final db    = await database;
+    final batch = db.batch();
+    final ahora = DateTime.now().toIso8601String();
+
+    for (final uuid in uuids) {
+      batch.update(
+        'traspasos_local',
+        {'estado': 'sincronizado', 'fecha_sync': ahora},
+        where: 'local_uuid = ?',
+        whereArgs: [uuid],
+      );
+      batch.delete(
+        'sync_queue',
+        where: 'traspaso_uuid = ?',
+        whereArgs: [uuid],
+      );
+    }
+
+    await batch.commit(noResult: true);
+  }
+
+  Future<int> contarPendientes() async {
+    final db   = await database;
+    final rows = await db.rawQuery(
+      "SELECT COUNT(*) as total FROM traspasos_local WHERE estado = 'pendiente'",
+    );
+    return (rows.first['total'] as int?) ?? 0;
   }
 }

@@ -1,12 +1,13 @@
 // lib/core/device_service.dart
 // ─────────────────────────────────────────────────────────────────────────────
 // Maneja la identidad única de cada dispositivo físico.
-// Al encender por primera vez, el operario ingresa el número (DV01, DV02…).
-// Eso se guarda en SQLite y nunca más se pide. No hay que tocar el código.
+// Incluye:
+// - Validaciones completas
+// - Generación de UUID para traspasos
 // ─────────────────────────────────────────────────────────────────────────────
 
-import 'package:intl/intl.dart';
 import 'database_service.dart';
+import 'package:uuid/uuid.dart';
 
 class DeviceService {
   static final DeviceService _instance = DeviceService._internal();
@@ -17,6 +18,14 @@ class DeviceService {
 
   String? _deviceId;
 
+  // 👇 GENERADOR DE UUID (NUEVO)
+  final Uuid _uuid = const Uuid();
+
+  /// Genera un UUID único para cada traspaso
+  Future<String> generarUUID() async {
+    return _uuid.v4();
+  }
+
   // ── ¿Ya fue inicializado este dispositivo? ─────────────────────────────────
   Future<bool> estaInicializado() async {
     final val = await _db.getConfig('inicializado');
@@ -26,17 +35,42 @@ class DeviceService {
   // ── Obtener el device_id guardado ─────────────────────────────────────────
   Future<String> getDeviceId() async {
     if (_deviceId != null) return _deviceId!;
+
     final val = await _db.getConfig('device_id');
-    _deviceId = val ?? 'DESCONOCIDO';
+
+    if (val == null || val.isEmpty) {
+      // Caso extremo: no está inicializado correctamente
+      _deviceId = 'DESCONOCIDO';
+    } else {
+      _deviceId = val;
+    }
+
     return _deviceId!;
   }
 
-  // ── Inicializar el dispositivo (pantalla de primer uso) ───────────────────
-  /// Recibe el código corto que ingresa el operario en la pantalla de inicio,
-  /// por ejemplo "01", "02", "15".
-  /// Genera el device_id en formato "DV01", "DV15", etc.
+  // ── Inicializar el dispositivo (primer uso) ───────────────────────────────
   Future<void> inicializar(String numeroCortado) async {
-    final numero = numeroCortado.trim().padLeft(2, '0');
+    final yaInicializado = await estaInicializado();
+    if (yaInicializado) {
+      throw Exception('El dispositivo ya fue inicializado');
+    }
+
+    final limpio = numeroCortado.trim();
+
+    if (limpio.isEmpty) {
+      throw Exception('Debe ingresar un número de dispositivo');
+    }
+
+    final numeroInt = int.tryParse(limpio);
+    if (numeroInt == null) {
+      throw Exception('El número debe ser solo dígitos');
+    }
+
+    if (numeroInt <= 0 || numeroInt > 99) {
+      throw Exception('El número debe estar entre 1 y 99');
+    }
+
+    final numero = numeroInt.toString().padLeft(2, '0');
     final deviceId = 'DV$numero';
 
     await _db.setConfig('device_id', deviceId);
@@ -45,29 +79,10 @@ class DeviceService {
     _deviceId = deviceId;
   }
 
-  // ── Generar UUID único para cada traspaso ─────────────────────────────────
-  /// Formato: DV01-20260327-092548-a3f1
-  /// Incluye el device_id + fecha + hora + sufijo aleatorio para evitar
-  /// cualquier colisión incluso si dos dispositivos crean un traspaso al
-  /// mismo segundo exacto.
-  Future<String> generarUUID() async {
-    final id = await getDeviceId();
-    final now = DateTime.now();
-    final fecha = DateFormat('yyyyMMdd').format(now);
-    final hora = DateFormat('HHmmss').format(now);
-    final sufijo = _randomHex(4);
-    return '$id-$fecha-$hora-$sufijo';
-  }
-
-  String _randomHex(int length) {
-    const chars = '0123456789abcdef';
-    final rand = DateTime.now().microsecondsSinceEpoch;
-    var result = '';
-    var seed = rand;
-    for (var i = 0; i < length; i++) {
-      seed = (seed * 1664525 + 1013904223) & 0xFFFFFFFF;
-      result += chars[seed % chars.length];
-    }
-    return result;
+  // ── Reset manual ──────────────────────────────────────────────────────────
+  Future<void> resetearDispositivo() async {
+    await _db.setConfig('device_id', '');
+    await _db.setConfig('inicializado', '0');
+    _deviceId = null;
   }
 }

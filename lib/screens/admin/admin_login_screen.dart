@@ -44,6 +44,15 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
     super.dispose();
   }
 
+  // ── Decodifica Base64 de forma segura ──────────────────────
+  String _decodificarPwd(String raw) {
+    try {
+      return utf8.decode(base64Decode(raw.trim()));
+    } catch (_) {
+      return raw.trim(); // ya estaba en texto plano
+    }
+  }
+
   Future<void> _login() async {
     final nick = _nickCtrl.text.trim();
     final pwd  = _pwdCtrl.text.trim();
@@ -58,10 +67,8 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
     final online = ConnectivityService().isOnline;
 
     if (online) {
-      // ══ CON INTERNET — valida en servidor ═══════════════
       await _loginOnline(nick, pwd);
     } else {
-      // ══ SIN INTERNET — valida en BD local ═══════════════
       await _loginOffline(nick, pwd);
     }
 
@@ -75,11 +82,12 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
     if (!mounted) return;
 
     if (resp['status'] == 'ok') {
-      // ✅ Guardar credenciales localmente para uso offline futuro
+      // ✅ Guardar en local con la contraseña en TEXTO PLANO
+      // para que el login offline pueda comparar directamente
       await DatabaseService().guardarAdminLocal(nick, pwd);
 
       Map<String, dynamic> adminData = {'usuario': nick, 'tipo': 'admin'};
-      final rawData = resp['data'];
+      final rawData = resp['admin'] ?? resp['data'];
       if (rawData is Map<String, dynamic>) {
         adminData = rawData;
       } else if (rawData is String) {
@@ -99,13 +107,30 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
 
   // ── LOGIN OFFLINE ─────────────────────────────────────────
   Future<void> _loginOffline(String nick, String pwd) async {
-    final db    = DatabaseService();
-    final valido = await db.validarAdminLocal(nick, pwd);
+    final db = DatabaseService();
+
+    // 1. Intentar comparación directa (texto plano guardado online)
+    bool valido = await db.validarAdminLocal(nick, pwd);
+
+    // 2. Si no coincide, intentar comparando contra la pwd decodificada
+    //    (por si en algún momento se guardó en Base64)
+    if (!valido) {
+      final rows = await (await db.database).query(
+        'admin_local',
+        where: 'usuario = ?',
+        whereArgs: [nick],
+        limit: 1,
+      );
+      if (rows.isNotEmpty) {
+        final pwdGuardada = rows.first['password']?.toString() ?? '';
+        final pwdDecodificada = _decodificarPwd(pwdGuardada);
+        valido = pwdDecodificada == pwd;
+      }
+    }
 
     if (!mounted) return;
 
     if (valido) {
-      // ✅ Credenciales correctas en BD local
       final adminData = await db.getAdminLocal(nick) ?? {};
       _irAlDashboard({
         'usuario': nick,
@@ -113,12 +138,11 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
         ...adminData,
       });
     } else {
-      // Verificar si hay algún admin guardado
       final tieneAdmin = await _hayAdminGuardado();
       setState(() {
         _error = tieneAdmin
             ? 'Usuario o contraseña incorrectos'
-            : 'Sin conexión y sin datos locales.\nConéctate a internet y descarga los datos primero.';
+            : 'Sin conexión y sin datos locales.\nConéctate a internet primero para sincronizar.';
       });
     }
   }
@@ -182,7 +206,6 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
 
                   const SizedBox(height: 8),
 
-                  // Badge online/offline
                   Container(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 12, vertical: 5),

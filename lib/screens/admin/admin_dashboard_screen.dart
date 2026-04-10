@@ -3,17 +3,18 @@
 // Panel Admin — 3 secciones:
 //   🔒 Modo Kiosko     — local, sin red
 //   ⬇  Descargar datos — nube → BD local del dispositivo
-//   ⬆  Subir datos     — BD local → nube (hmoval + facturas)
+//   📋 Log traspasos   — historial local con estado de sync
 // ─────────────────────────────────────────────────────────────
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/connectivity_service.dart';
-import '../../services/api_service.dart';
+import '../../core/database_service.dart';
 import '../../services/sync_service.dart';
 import '../../main.dart';
 import '../login_screen.dart';
+import '../../widgets/sync_log_panel.dart';
 
 class AdminDashboardScreen extends ConsumerStatefulWidget {
   final Map<String, dynamic> adminData;
@@ -28,12 +29,11 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
     with SingleTickerProviderStateMixin {
 
   bool _descargaLoading = false;
-  bool _subidaLoading   = false;
-
   String? _descargaMsg;
   bool?   _descargaOk;
-  String? _subidaMsg;
-  bool?   _subidaOk;
+
+  bool _logLoading = true;
+  List<Map<String, dynamic>> _logTraspasos = [];
 
   late AnimationController _animCtrl;
   late Animation<double>   _fadeAnim;
@@ -45,6 +45,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
         vsync: this, duration: const Duration(milliseconds: 500));
     _fadeAnim = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
     _animCtrl.forward();
+    _cargarLog();
   }
 
   @override
@@ -54,7 +55,22 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
   }
 
   // ══════════════════════════════════════════════════════════
-  // 🔒 KIOSKO — local, sin BD, sin red
+  // CARGAR LOG
+  // ══════════════════════════════════════════════════════════
+  Future<void> _cargarLog() async {
+    setState(() => _logLoading = true);
+    final db   = DatabaseService();
+    final data = await db.getUltimosTraspasos(limite: 50);
+    if (mounted) {
+      setState(() {
+        _logTraspasos = data;
+        _logLoading   = false;
+      });
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // 🔒 KIOSKO
   // ══════════════════════════════════════════════════════════
   Future<void> _toggleKiosko() async {
     final kiosk       = ref.read(kioskProvider);
@@ -73,8 +89,6 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
     if (confirm != true) return;
 
     if (nuevoEstado) {
-      // ✅ FIX: onTimeout ANTES de activate() para que el timer
-      // arranque con el callback ya asignado
       kiosk.onTimeout = () {
         navigatorKey.currentState?.pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const LoginScreen()),
@@ -94,7 +108,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
   }
 
   // ══════════════════════════════════════════════════════════
-  // ⬇ DESCARGAR — nube → BD local
+  // ⬇ DESCARGAR
   // ══════════════════════════════════════════════════════════
   Future<void> _descargar() async {
     if (!ConnectivityService().isOnline) {
@@ -137,375 +151,48 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
   }
 
   // ══════════════════════════════════════════════════════════
-  // ⬆ SUBIR — BD local → nube
-  // ══════════════════════════════════════════════════════════
-  Future<void> _abrirSubida() async {
-    if (!ConnectivityService().isOnline) {
-      _showSnack('Sin conexión a internet', success: false);
-      return;
-    }
-
-    setState(() => _subidaLoading = true);
-    final resp = await ApiService.getSyncPendientes();
-    setState(() => _subidaLoading = false);
-
-    if (!mounted) return;
-
-    if (resp['status'] != 'ok') {
-      _showSnack(resp['mensaje'] ?? 'Error al consultar pendientes', success: false);
-      return;
-    }
-
-    _mostrarModalSubida(resp);
-  }
-
-  void _mostrarModalSubida(Map<String, dynamic> data) {
-    final resumen     = data['resumen']          as Map<String, dynamic>? ?? {};
-    final movimientos = data['movimientos']      as List<dynamic>?        ?? [];
-    final total       = data['total_pendientes'] as int?                  ?? 0;
-    final hmovalInfo  = resumen['hmoval']        as Map<String, dynamic>? ?? {};
-    final mcabfaInfo  = resumen['mcabfa']        as Map<String, dynamic>? ?? {};
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => DraggableScrollableSheet(
-        initialChildSize: 0.85,
-        maxChildSize:     0.95,
-        minChildSize:     0.5,
-        builder: (_, scrollCtrl) => Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFF141929),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          child: Column(
-            children: [
-              Container(
-                margin: const EdgeInsets.only(top: 12),
-                width: 40, height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Row(
-                  children: [
-                    const Icon(Icons.cloud_upload_outlined,
-                        color: Color(0xFF4F8CFF), size: 26),
-                    const SizedBox(width: 10),
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Subir al Servidor',
-                              style: TextStyle(color: Colors.white,
-                                  fontSize: 18, fontWeight: FontWeight.bold)),
-                          Text('Datos pendientes de sincronizar',
-                              style: TextStyle(color: Colors.white54, fontSize: 12)),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close, color: Colors.white54),
-                      onPressed: () => Navigator.pop(context),
-                    ),
-                  ],
-                ),
-              ),
-              const Divider(color: Colors.white12, height: 1),
-              const SizedBox(height: 12),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Column(
-                  children: [
-                    _buildResumenTabla(
-                      tabla: 'hmoval', label: 'Movimientos de Traspaso',
-                      registros: hmovalInfo['registros'] as int? ?? 0,
-                      extra: '${hmovalInfo['total_libros'] ?? 0} libros en total',
-                      color: const Color(0xFF4F8CFF), icon: Icons.swap_horiz,
-                    ),
-                    const SizedBox(height: 10),
-                    _buildResumenTabla(
-                      tabla: 'mcabfa', label: 'Facturas',
-                      registros: mcabfaInfo['registros'] as int? ?? 0,
-                      extra: '',
-                      color: Colors.green, icon: Icons.receipt_long_outlined,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              Expanded(
-                child: movimientos.isEmpty
-                    ? const Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.check_circle_outline,
-                                color: Colors.greenAccent, size: 52),
-                            SizedBox(height: 12),
-                            Text('¡Todo sincronizado!',
-                                style: TextStyle(color: Colors.white70, fontSize: 16)),
-                            SizedBox(height: 4),
-                            Text('No hay datos pendientes de subir',
-                                style: TextStyle(color: Colors.white38, fontSize: 13)),
-                          ],
-                        ),
-                      )
-                    : ListView.builder(
-                        controller: scrollCtrl,
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
-                        itemCount: movimientos.length,
-                        itemBuilder: (_, i) => _buildMovimientoCard(
-                            movimientos[i] as Map<String, dynamic>),
-                      ),
-              ),
-              if (total > 0)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-                  child: Column(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 10),
-                        decoration: BoxDecoration(
-                          color: Colors.orange.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                              color: Colors.orange.withValues(alpha: 0.4)),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.warning_amber_rounded,
-                                color: Colors.orange, size: 18),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                'Se marcarán $total registros como sincronizados.',
-                                style: const TextStyle(
-                                    color: Colors.orange, fontSize: 12),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      SizedBox(
-                        width: double.infinity, height: 52,
-                        child: ElevatedButton.icon(
-                          icon: const Icon(Icons.cloud_upload),
-                          label: Text('Subir $total registros'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF4F8CFF),
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14)),
-                          ),
-                          onPressed: () => _confirmarSubida(
-                            movimientos: movimientos,
-                            tieneFacturas:
-                                (mcabfaInfo['registros'] as int? ?? 0) > 0,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _confirmarSubida({
-    required List<dynamic> movimientos,
-    required bool tieneFacturas,
-  }) async {
-    Navigator.pop(context);
-
-    final confirm = await _showConfirmDialog(
-      title:       'Confirmar sincronización',
-      content:     '¿Confirmas subir todos los registros pendientes al servidor?',
-      icon:        Icons.cloud_upload_outlined,
-      color:       const Color(0xFF4F8CFF),
-      confirmText: 'Subir ahora',
-    );
-    if (confirm != true) return;
-
-    final nums = movimientos
-        .map((m) => (m as Map<String, dynamic>)['num_movimiento'] as int)
-        .toList();
-
-    setState(() {
-      _subidaLoading = true;
-      _subidaMsg     = null;
-      _subidaOk      = null;
-    });
-
-    final resp = await ApiService.marcarSincronizadoHmoval(nums);
-    if (tieneFacturas) await ApiService.marcarSincronizadoFacturas();
-
-    setState(() {
-      _subidaLoading = false;
-      _subidaOk      = resp['status'] == 'ok';
-      _subidaMsg     = resp['status'] == 'ok'
-          ? '✅ ${resp['afectados'] ?? nums.length} registros subidos correctamente'
-          : '❌ ${resp['mensaje'] ?? 'Error al sincronizar'}';
-    });
-
-    _showSnack(
-      resp['status'] == 'ok'
-          ? '${resp['afectados'] ?? nums.length} registros subidos'
-          : resp['mensaje'] ?? 'Error al sincronizar',
-      success: resp['status'] == 'ok',
-    );
-  }
-
-  // ══════════════════════════════════════════════════════════
   // HELPERS UI
   // ══════════════════════════════════════════════════════════
-  Widget _buildResumenTabla({
-    required String tabla, required String label,
-    required int registros, required String extra,
-    required Color color, required IconData icon,
-  }) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-    decoration: BoxDecoration(
-      color: color.withValues(alpha: 0.08),
-      borderRadius: BorderRadius.circular(12),
-      border: Border.all(color: color.withValues(alpha: 0.3)),
-    ),
-    child: Row(
-      children: [
-        Container(
-          width: 38, height: 38,
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.15),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Icon(icon, color: color, size: 18),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: const TextStyle(
-                  color: Colors.white70, fontSize: 12,
-                  fontWeight: FontWeight.w500)),
-              Text('Tabla: $tabla', style: const TextStyle(
-                  color: Colors.white38, fontSize: 11)),
-              if (extra.isNotEmpty)
-                Text(extra, style: TextStyle(color: color, fontSize: 11)),
-            ],
-          ),
-        ),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: registros > 0 ? color : Colors.green,
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Text(
-            registros > 0 ? '$registros pend.' : '✓ Al día',
-            style: const TextStyle(color: Colors.white,
-                fontSize: 11, fontWeight: FontWeight.bold),
-          ),
-        ),
-      ],
-    ),
-  );
 
-  Widget _buildMovimientoCard(Map<String, dynamic> m) {
-    final fecha    = m['fecha']?.toString() ?? '';
-    final fechaFmt = fecha.length == 8
-        ? '${fecha.substring(6, 8)}/${fecha.substring(4, 6)}/${fecha.substring(0, 4)}'
-        : fecha;
-    final hora    = m['hora']?.toString() ?? '';
-    final horaFmt = hora.length == 6
-        ? '${hora.substring(0, 2)}:${hora.substring(2, 4)}:${hora.substring(4, 6)}'
-        : hora;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E2640),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF4F8CFF).withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text('MOV #${m['num_movimiento']}',
-                    style: const TextStyle(color: Color(0xFF4F8CFF),
-                        fontSize: 12, fontWeight: FontWeight.bold)),
-              ),
-              const Spacer(),
-              Text('$fechaFmt  $horaFmt',
-                  style: const TextStyle(color: Colors.white38, fontSize: 11)),
-            ],
-          ),
-          const SizedBox(height: 10),
-          _infoRow(Icons.store_outlined, 'Origen',  m['origen_nombre']  ?? '—'),
-          const SizedBox(height: 4),
-          _infoRow(Icons.store,          'Destino', m['destino_nombre'] ?? '—'),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              _chip('${m['num_lineas']} líneas',   const Color(0xFF4F8CFF)),
-              const SizedBox(width: 8),
-              _chip('${m['total_libros']} libros', Colors.greenAccent),
-            ],
-          ),
-          if ((m['detalle_libros'] ?? '').toString().isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(m['detalle_libros'].toString(),
-                style: const TextStyle(color: Colors.white38, fontSize: 11),
-                maxLines: 2, overflow: TextOverflow.ellipsis),
-          ],
-        ],
-      ),
-    );
+  String _fmtFecha(String? iso) {
+    if (iso == null || iso.isEmpty) return '—';
+    try {
+      final dt  = DateTime.parse(iso).toLocal();
+      final mes = ['ene','feb','mar','abr','may','jun',
+                   'jul','ago','sep','oct','nov','dic'][dt.month - 1];
+      return '${dt.day.toString().padLeft(2,'0')} $mes ${dt.year}  '
+             '${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}';
+    } catch (_) {
+      return iso.length > 16 ? iso.substring(0, 16) : iso;
+    }
   }
 
-  Widget _infoRow(IconData icon, String label, String value) => Row(
-    children: [
-      Icon(icon, color: Colors.white38, size: 14),
-      const SizedBox(width: 6),
-      Text('$label: ', style: const TextStyle(color: Colors.white38, fontSize: 12)),
-      Expanded(
-        child: Text(value,
-            style: const TextStyle(color: Colors.white70, fontSize: 12,
-                fontWeight: FontWeight.w500),
-            overflow: TextOverflow.ellipsis),
-      ),
-    ],
-  );
+  Color _estadoColor(String estado) {
+    switch (estado) {
+      case 'sincronizado': return Colors.greenAccent;
+      case 'pendiente'   : return Colors.orange;
+      case 'error'       : return Colors.redAccent;
+      default            : return Colors.white38;
+    }
+  }
 
-  Widget _chip(String label, Color color) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-    decoration: BoxDecoration(
-      color: color.withValues(alpha: 0.12),
-      borderRadius: BorderRadius.circular(6),
-      border: Border.all(color: color.withValues(alpha: 0.4)),
-    ),
-    child: Text(label, style: TextStyle(
-        color: color, fontSize: 11, fontWeight: FontWeight.w600)),
-  );
+  IconData _estadoIcon(String estado) {
+    switch (estado) {
+      case 'sincronizado': return Icons.cloud_done_outlined;
+      case 'pendiente'   : return Icons.cloud_upload_outlined;
+      case 'error'       : return Icons.cloud_off_outlined;
+      default            : return Icons.hourglass_empty;
+    }
+  }
+
+  String _estadoLabel(String estado) {
+    switch (estado) {
+      case 'sincronizado': return 'SINCRONIZADO';
+      case 'pendiente'   : return 'PENDIENTE';
+      case 'error'       : return 'ERROR';
+      default            : return estado.toUpperCase();
+    }
+  }
 
   Future<bool?> _showConfirmDialog({
     required String title, required String content,
@@ -527,8 +214,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
             Container(
               width: 56, height: 56,
               decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.15),
-                  shape: BoxShape.circle),
+                  color: color.withValues(alpha: 0.15), shape: BoxShape.circle),
               child: Icon(icon, color: color, size: 28),
             ),
             const SizedBox(height: 16),
@@ -597,8 +283,16 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
   Widget build(BuildContext context) {
     final kiosk  = ref.watch(kioskProvider);
     final activo = kiosk.isKioskActive;
-    final nombre = widget.adminData['nombre'] ?? 'Administrador';
+
+    final nombre = widget.adminData['Nombre_Usuario']
+            ?.toString().trim().isNotEmpty == true
+        ? widget.adminData['Nombre_Usuario'].toString().trim()
+        : widget.adminData['nombre']?.toString() ?? 'Administrador';
+
     final online = ConnectivityService().isOnline;
+
+    final pendientes    = _logTraspasos.where((t) => t['estado'] == 'pendiente').length;
+    final sincronizados = _logTraspasos.where((t) => t['estado'] == 'sincronizado').length;
 
     return Scaffold(
       backgroundColor: const Color(0xFF0A0E1A),
@@ -679,7 +373,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
                 iconColor:   activo ? Colors.orange : const Color(0xFF4F8CFF),
                 title:       'Modo Kiosko',
                 subtitle:    activo
-                    ? 'Activo — usuarios no pueden salir de la app'
+                    ? 'Activo — usuarios no pueden salir'
                     : 'Inactivo — uso normal del dispositivo',
                 statusLabel: activo ? 'ACTIVO' : 'INACTIVO',
                 statusColor: activo ? Colors.orange : Colors.green,
@@ -690,7 +384,8 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
                       children: [
                         const Expanded(
                           child: Text('Estado del modo kiosko:',
-                              style: TextStyle(color: Colors.white60, fontSize: 13)),
+                              style: TextStyle(
+                                  color: Colors.white60, fontSize: 13)),
                         ),
                         Switch(
                           value: activo,
@@ -709,9 +404,8 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
                             ? 'Desactivar modo kiosko'
                             : 'Activar modo kiosko'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: activo
-                              ? Colors.orange
-                              : const Color(0xFF4F8CFF),
+                          backgroundColor:
+                              activo ? Colors.orange : const Color(0xFF4F8CFF),
                           foregroundColor: Colors.white,
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12)),
@@ -733,11 +427,13 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
               if (!online)
                 Container(
                   margin: const EdgeInsets.only(bottom: 14),
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                   decoration: BoxDecoration(
                     color: Colors.red.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+                    border:
+                        Border.all(color: Colors.red.withValues(alpha: 0.3)),
                   ),
                   child: const Row(
                     children: [
@@ -745,7 +441,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
                       SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'Sin conexión a internet. Conéctate para sincronizar.',
+                          'Sin conexión. Los traspasos se subirán automáticamente al reconectar.',
                           style: TextStyle(color: Colors.red, fontSize: 12),
                         ),
                       ),
@@ -753,7 +449,6 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
                   ),
                 ),
 
-              // ── CARD DESCARGAR ─────────────────────────
               _AdminCard(
                 icon:        Icons.cloud_download_outlined,
                 iconColor:   Colors.teal,
@@ -765,9 +460,11 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const SizedBox(height: 14),
-                    _syncRow(Icons.people_outline, 'Usuarios y perfiles de traspaso'),
+                    _syncRow(Icons.people_outline,
+                        'Usuarios y perfiles de traspaso'),
                     const SizedBox(height: 6),
-                    _syncRow(Icons.inventory_2_outlined, 'Catálogo de productos'),
+                    _syncRow(Icons.inventory_2_outlined,
+                        'Catálogo de productos'),
                     const SizedBox(height: 6),
                     _syncRow(Icons.manage_accounts_outlined,
                         'Configuración de administrador'),
@@ -780,12 +477,15 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
                       width: double.infinity,
                       child: ElevatedButton.icon(
                         icon: _descargaLoading
-                            ? const SizedBox(width: 16, height: 16,
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
                                 child: CircularProgressIndicator(
                                     strokeWidth: 2, color: Colors.white))
                             : const Icon(Icons.cloud_download),
                         label: Text(_descargaLoading
-                            ? 'Descargando...' : 'Descargar ahora'),
+                            ? 'Descargando...'
+                            : 'Descargar ahora'),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.teal,
                           foregroundColor: Colors.white,
@@ -793,79 +493,82 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
                               borderRadius: BorderRadius.circular(12)),
                           padding: const EdgeInsets.symmetric(vertical: 13),
                         ),
-                        onPressed: (_descargaLoading || !online) ? null : _descargar,
+                        onPressed:
+                            (_descargaLoading || !online) ? null : _descargar,
                       ),
                     ),
                   ],
                 ),
               ),
 
-              const SizedBox(height: 16),
+              const SizedBox(height: 28),
 
-              // ── CARD SUBIR ────────────────────────────
-              _AdminCard(
-                icon:        Icons.cloud_upload_outlined,
-                iconColor:   const Color(0xFF4F8CFF),
-                title:       'Subir datos',
-                subtitle:    'Dispositivo → nube',
-                statusLabel: '',
-                statusColor: Colors.transparent,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const SizedBox(height: 14),
-                    _syncRow(Icons.swap_horiz, 'Movimientos de traspaso (hmoval)'),
-                    const SizedBox(height: 6),
-                    _syncRow(Icons.receipt_long_outlined, 'Facturas de venta (mcabfa)'),
-                    const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.04),
-                        borderRadius: BorderRadius.circular(8),
+              // ══ PANEL DE SYNC (reemplaza el botón de sync) ══════════════
+              _sectionLabel('SINCRONIZACIÓN AUTOMÁTICA'),
+              const SizedBox(height: 12),
+              const SyncLogPanel(),
+
+              const SizedBox(height: 28),
+
+              // ══ LOG DE TRASPASOS ══════════════════════════
+              _sectionLabel('REGISTRO DE TRASPASOS'),
+              const SizedBox(height: 6),
+
+              if (!_logLoading)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Row(
+                    children: [
+                      _statChip(
+                        label: 'Total',
+                        value: _logTraspasos.length.toString(),
+                        color: Colors.white54,
                       ),
-                      child: const Row(
-                        children: [
-                          Icon(Icons.info_outline, color: Colors.white38, size: 14),
-                          SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'Solo registros con mnube=0. Puedes revisar el listado antes de confirmar.',
-                              style: TextStyle(color: Colors.white38,
-                                  fontSize: 11, height: 1.4),
-                            ),
+                      const SizedBox(width: 8),
+                      _statChip(
+                        label: 'Subidos',
+                        value: sincronizados.toString(),
+                        color: Colors.greenAccent,
+                      ),
+                      const SizedBox(width: 8),
+                      _statChip(
+                        label: 'Pendientes',
+                        value: pendientes.toString(),
+                        color: pendientes > 0 ? Colors.orange : Colors.white38,
+                      ),
+                      const Spacer(),
+                      GestureDetector(
+                        onTap: _cargarLog,
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1E2640),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.white12),
                           ),
-                        ],
-                      ),
-                    ),
-                    if (_subidaMsg != null) ...[
-                      const SizedBox(height: 12),
-                      _resultBox(_subidaMsg!, _subidaOk ?? false),
-                    ],
-                    const SizedBox(height: 14),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        icon: _subidaLoading
-                            ? const SizedBox(width: 16, height: 16,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2, color: Colors.white))
-                            : const Icon(Icons.cloud_upload),
-                        label: Text(_subidaLoading
-                            ? 'Consultando...' : 'Ver pendientes y subir'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF4F8CFF),
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
-                          padding: const EdgeInsets.symmetric(vertical: 13),
+                          child: const Icon(Icons.refresh_rounded,
+                              color: Colors.white54, size: 18),
                         ),
-                        onPressed: (_subidaLoading || !online) ? null : _abrirSubida,
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
+
+              _logLoading
+                  ? const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(32),
+                        child: CircularProgressIndicator(
+                            color: Color(0xFF4F8CFF)),
+                      ),
+                    )
+                  : _logTraspasos.isEmpty
+                      ? _emptyLog()
+                      : Column(
+                          children: _logTraspasos
+                              .map((t) => _logCard(t))
+                              .toList(),
+                        ),
 
               const SizedBox(height: 32),
             ],
@@ -875,32 +578,282 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
     );
   }
 
+  // ── Log card individual — FIX OVERFLOW ───────────────────────────────────
+  Widget _logCard(Map<String, dynamic> t) {
+    final estado         = t['estado'] as String? ?? 'pendiente';
+    final estadoColor    = _estadoColor(estado);
+    final estadoIcon     = _estadoIcon(estado);
+    final estadoLabel    = _estadoLabel(estado);
+    final id             = t['id']?.toString() ?? '—';
+    final origenAlmacen  = t['origen_almacen']  as String? ?? '—';
+    final origenStand    = t['origen_stand']    as String? ?? '—';
+    final destinoAlmacen = t['destino_almacen'] as String? ?? '—';
+    final destinoStand   = t['destino_stand']   as String? ?? '—';
+    final numRefs        = t['num_refs']        as int? ?? 0;
+    final totalLibros    = t['total_libros']    as int? ?? 0;
+    final fechaCreacion  = _fmtFecha(t['fecha_creacion'] as String?);
+    final fechaSync      = t['fecha_sync'] != null
+        ? _fmtFecha(t['fecha_sync'] as String?)
+        : null;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF141929),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: estadoColor.withValues(alpha: 0.2)),
+      ),
+      child: Column(
+        children: [
+          // ── Cabecera ─────────────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+
+                // Número #id
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: estadoColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                        color: estadoColor.withValues(alpha: 0.35)),
+                  ),
+                  child: Center(
+                    child: Text(
+                      '#$id',
+                      style: TextStyle(
+                          color: estadoColor,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(width: 10),
+
+                // FIX: Expanded envuelve toda la info central para
+                // que no empuje al badge y cause overflow
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Origen → Destino en dos líneas si no caben
+                      Wrap(
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 4,
+                        runSpacing: 2,
+                        children: [
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.store_outlined,
+                                  color: Colors.white38, size: 12),
+                              const SizedBox(width: 3),
+                              Text(
+                                '$origenAlmacen  St.$origenStand',
+                                style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600),
+                              ),
+                            ],
+                          ),
+                          Icon(Icons.arrow_forward_rounded,
+                              color: Colors.white24, size: 12),
+                          Text(
+                            '$destinoAlmacen  St.$destinoStand',
+                            style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        fechaCreacion,
+                        style: const TextStyle(
+                            color: Colors.white38, fontSize: 10),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(width: 8),
+
+                // Badge estado — tamaño fijo, no compite con el texto
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: estadoColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                        color: estadoColor.withValues(alpha: 0.4)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(estadoIcon, color: estadoColor, size: 11),
+                      const SizedBox(width: 4),
+                      Text(
+                        estadoLabel,
+                        style: TextStyle(
+                            color: estadoColor,
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 0.3),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // ── Pie: contadores + fecha sync ─────────────────────────────────
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: const BoxDecoration(
+              color: Color(0xFF0F1520),
+              borderRadius:
+                  BorderRadius.vertical(bottom: Radius.circular(16)),
+            ),
+            child: Row(
+              children: [
+                _miniChip('$numRefs refs', const Color(0xFF4F8CFF)),
+                const SizedBox(width: 8),
+                _miniChip('$totalLibros libros', Colors.greenAccent),
+                const Spacer(),
+                if (fechaSync != null)
+                  Row(
+                    children: [
+                      const Icon(Icons.cloud_done_outlined,
+                          color: Colors.greenAccent, size: 11),
+                      const SizedBox(width: 4),
+                      Text(fechaSync,
+                          style: const TextStyle(
+                              color: Colors.greenAccent, fontSize: 9)),
+                    ],
+                  )
+                else
+                  const Row(
+                    children: [
+                      Icon(Icons.schedule_rounded,
+                          color: Colors.orange, size: 11),
+                      SizedBox(width: 4),
+                      Text('En espera',
+                          style:
+                              TextStyle(color: Colors.orange, fontSize: 9)),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _emptyLog() => Container(
+        padding: const EdgeInsets.symmetric(vertical: 40),
+        child: const Center(
+          child: Column(
+            children: [
+              Icon(Icons.receipt_long_outlined,
+                  color: Colors.white12, size: 52),
+              SizedBox(height: 12),
+              Text('Sin traspasos registrados',
+                  style:
+                      TextStyle(color: Colors.white38, fontSize: 14)),
+              SizedBox(height: 4),
+              Text('Los traspasos aparecerán aquí al generarse',
+                  style: TextStyle(color: Colors.white24, fontSize: 12)),
+            ],
+          ),
+        ),
+      );
+
+  Widget _statChip({
+    required String label,
+    required String value,
+    required Color color,
+  }) =>
+      Container(
+        padding:
+            const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: color.withValues(alpha: 0.25)),
+        ),
+        child: Column(
+          children: [
+            Text(value,
+                style: TextStyle(
+                    color: color,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold)),
+            Text(label,
+                style: const TextStyle(
+                    color: Colors.white38, fontSize: 9)),
+          ],
+        ),
+      );
+
+  Widget _miniChip(String label, Color color) => Container(
+        padding:
+            const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: color.withValues(alpha: 0.3)),
+        ),
+        child: Text(label,
+            style: TextStyle(
+                color: color,
+                fontSize: 9,
+                fontWeight: FontWeight.w600)),
+      );
+
   Widget _sectionLabel(String label) => Text(label,
-      style: const TextStyle(color: Colors.white38, fontSize: 11,
-          fontWeight: FontWeight.w700, letterSpacing: 2));
+      style: const TextStyle(
+          color: Colors.white38,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 2));
 
   Widget _syncRow(IconData icon, String text) => Row(
-    children: [
-      Icon(icon, color: Colors.white38, size: 15),
-      const SizedBox(width: 8),
-      Text(text, style: const TextStyle(color: Colors.white54, fontSize: 12)),
-    ],
-  );
+        children: [
+          Icon(icon, color: Colors.white38, size: 15),
+          const SizedBox(width: 8),
+          Text(text,
+              style: const TextStyle(
+                  color: Colors.white54, fontSize: 12)),
+        ],
+      );
 
   Widget _resultBox(String msg, bool ok) => Container(
-    padding: const EdgeInsets.all(10),
-    decoration: BoxDecoration(
-      color: (ok ? Colors.green : Colors.red).withValues(alpha: 0.08),
-      borderRadius: BorderRadius.circular(8),
-      border: Border.all(
-        color: (ok ? Colors.green : Colors.red).withValues(alpha: 0.3),
-      ),
-    ),
-    child: Text(msg,
-        style: TextStyle(
-            color: ok ? Colors.greenAccent : Colors.redAccent,
-            fontSize: 11, height: 1.5)),
-  );
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: (ok ? Colors.green : Colors.red).withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color:
+                (ok ? Colors.green : Colors.red).withValues(alpha: 0.3),
+          ),
+        ),
+        child: Text(msg,
+            style: TextStyle(
+                color: ok ? Colors.greenAccent : Colors.redAccent,
+                fontSize: 11,
+                height: 1.5)),
+      );
 }
 
 // ══════════════════════════════════════════════════════════
@@ -924,57 +877,69 @@ class _AdminCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(20),
-    decoration: BoxDecoration(
-      color: const Color(0xFF141929),
-      borderRadius: BorderRadius.circular(20),
-      border: Border.all(color: iconColor.withValues(alpha: 0.2)),
-      boxShadow: [
-        BoxShadow(color: iconColor.withValues(alpha: 0.05),
-            blurRadius: 20, offset: const Offset(0, 4)),
-      ],
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Container(
-              width: 44, height: 44,
-              decoration: BoxDecoration(
-                color: iconColor.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(icon, color: iconColor, size: 21),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: const TextStyle(color: Colors.white,
-                      fontSize: 15, fontWeight: FontWeight.bold)),
-                  Text(subtitle, style: const TextStyle(
-                      color: Colors.white54, fontSize: 12)),
-                ],
-              ),
-            ),
-            if (statusLabel.isNotEmpty)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: statusColor.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: statusColor.withValues(alpha: 0.5)),
-                ),
-                child: Text(statusLabel,
-                    style: TextStyle(color: statusColor, fontSize: 10,
-                        fontWeight: FontWeight.bold, letterSpacing: 1)),
-              ),
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: const Color(0xFF141929),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: iconColor.withValues(alpha: 0.2)),
+          boxShadow: [
+            BoxShadow(
+                color: iconColor.withValues(alpha: 0.05),
+                blurRadius: 20,
+                offset: const Offset(0, 4)),
           ],
         ),
-        child,
-      ],
-    ),
-  );
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: iconColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(icon, color: iconColor, size: 21),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold)),
+                      Text(subtitle,
+                          style: const TextStyle(
+                              color: Colors.white54, fontSize: 12)),
+                    ],
+                  ),
+                ),
+                if (statusLabel.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                          color: statusColor.withValues(alpha: 0.5)),
+                    ),
+                    child: Text(statusLabel,
+                        style: TextStyle(
+                            color: statusColor,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1)),
+                  ),
+              ],
+            ),
+            child,
+          ],
+        ),
+      );
 }

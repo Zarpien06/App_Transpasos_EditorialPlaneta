@@ -4,7 +4,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../main.dart'; // 👈 Para acceder a kioskProvider
+import '../main.dart';
 import '../providers/traspaso_provider.dart';
 import '../services/api_service.dart';
 import '../widgets/campo_codigo.dart';
@@ -46,7 +46,6 @@ class _OrigenScreenState extends ConsumerState<OrigenScreen> {
       return;
     }
 
-    // 🔥 Registrar actividad en Kiosk
     ref.read(kioskProvider).registerActivity();
 
     setState(() => _loading = true);
@@ -56,7 +55,6 @@ class _OrigenScreenState extends ConsumerState<OrigenScreen> {
       if (!mounted) return;
 
       if (res['status'] == 'ok') {
-        // ✅ CORREGIDO: Acceder al notifier para usar setOrigen
         ref.read(traspasoProvider.notifier).setOrigen(res['data']);
 
         if (mounted) {
@@ -66,7 +64,8 @@ class _OrigenScreenState extends ConsumerState<OrigenScreen> {
           );
         }
       } else {
-        alertaError(context, res['mensaje'] ?? 'Error desconocido');
+        // ✅ CORREGIDO: era res['mensaje'], la API devuelve 'message'
+        alertaError(context, res['message'] ?? 'Error desconocido');
       }
     } catch (e) {
       if (!mounted) return;
@@ -91,7 +90,6 @@ class _OrigenScreenState extends ConsumerState<OrigenScreen> {
           children: [
             const SizedBox(height: 20),
 
-            // 🔥 LOGO OPTIMIZADO
             Center(
               child: Image.asset(
                 'assets/img/planeta-icon-v2.png',
@@ -110,7 +108,6 @@ class _OrigenScreenState extends ConsumerState<OrigenScreen> {
 
             const SizedBox(height: 30),
 
-            // 🧾 CAMPO
             CampoCodigo(
               controller: _clave,
               label: 'Clave Secreta (código de barras)',
@@ -119,7 +116,6 @@ class _OrigenScreenState extends ConsumerState<OrigenScreen> {
 
             const SizedBox(height: 30),
 
-            // 🚀 BOTÓN
             SizedBox(
               height: 55,
               child: _loading
@@ -144,7 +140,6 @@ class _OrigenScreenState extends ConsumerState<OrigenScreen> {
 
             const SizedBox(height: 16),
 
-            // ❌ CANCELAR
             TextButton.icon(
               icon: const Icon(Icons.cancel_outlined, color: Colors.white38),
               label: const Text(
@@ -152,7 +147,6 @@ class _OrigenScreenState extends ConsumerState<OrigenScreen> {
                 style: TextStyle(color: Colors.white38),
               ),
               onPressed: () {
-                // ✅ CORREGIDO: Acceder al notifier
                 ref.read(traspasoProvider.notifier).limpiar();
                 Navigator.pop(context);
               },
