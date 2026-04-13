@@ -77,10 +77,10 @@ class _FacturaScreenState extends ConsumerState<FacturaScreen> {
 
     // ── Altura generosa para que nunca se corten los totales ──────────────
     // cabecera fija 115mm + cada línea 22mm + pie 30mm + margen extra 10mm
-    const double cabeceraMm = 115.0;
-    const double lineaMm    = 22.0;
-    const double pieMm      = 30.0;
-    const double extraMm    = 10.0;
+    const double cabeceraMm = 200.0;
+    const double lineaMm    = 100.0;
+    const double pieMm      = 50.0;
+    const double extraMm    = 50.0;
     final double totalMm =
         cabeceraMm + (ts.items.length * lineaMm) + pieMm + extraMm;
 
@@ -234,7 +234,17 @@ class _FacturaScreenState extends ConsumerState<FacturaScreen> {
                     style: pw.TextStyle(font: fontBold, fontSize: 12)),
               ],
             ),
-            pw.SizedBox(height: 4),
+            pw.SizedBox(height: 20),
+
+            pw.Center(
+              child: pw.Text(
+                '.',
+                style: pw.TextStyle(font: font, fontSize: 10),
+              ),
+            ),
+            
+            pw.SizedBox(height: 20),
+        
           ],
         ),
       ),

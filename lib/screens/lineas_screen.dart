@@ -96,6 +96,8 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
         } else {
           _mostrarDialogoCantidad(libro, esNuevo: false);
         }
+      } else if (res['status'] == 'not_found') {
+        _mostrarDialogoNoEncontrado(codigo);
       } else {
         _mostrarDialogoNoEncontrado(codigo);
       }
@@ -325,7 +327,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // DIÁLOGO: libro no encontrado → ingresar manualmente
+  // DIÁLOGO: libro no encontrado → ingresar nombre Y precio
   // ─────────────────────────────────────────────────────────────────────────
   void _mostrarDialogoNoEncontrado(String codigo) {
     if (_notifier.existe(codigo)) {
@@ -333,8 +335,9 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
       return;
     }
 
-    final descCtrl = TextEditingController();
-    bool guardando = false;
+    final descCtrl   = TextEditingController();
+    final precioCtrl = TextEditingController();
+    bool guardando   = false;
 
     showDialog(
       context: context,
@@ -358,6 +361,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // ── Código escaneado ────────────────────────────────────
               Container(
                 padding: const EdgeInsets.symmetric(
                     horizontal: 10, vertical: 6),
@@ -373,14 +377,22 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
               ),
               const SizedBox(height: 14),
               const Text(
-                'Ingresa el nombre del libro\npara guardarlo en la base de datos:',
+                'Ingresa los datos del libro\npara guardarlo en la base de datos:',
                 style: TextStyle(color: Color(0xFFBBBBBB), fontSize: 12),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 12),
+
+              // ── Campo: nombre del libro ─────────────────────────────
+              const Text(
+                'Nombre del libro',
+                style: TextStyle(color: Color(0xFF888888), fontSize: 11),
+              ),
+              const SizedBox(height: 4),
               TextField(
                 controller: descCtrl,
                 autofocus: true,
                 style: const TextStyle(color: Colors.white),
+                textInputAction: TextInputAction.next,
                 decoration: InputDecoration(
                   hintText: 'Descripción del libro...',
                   hintStyle: const TextStyle(color: Color(0xFF555555)),
@@ -393,10 +405,48 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
                   contentPadding: const EdgeInsets.symmetric(
                       horizontal: 14, vertical: 12),
                 ),
-                onSubmitted: (v) async {
-                  if (v.trim().isEmpty) return;
+              ),
+              const SizedBox(height: 12),
+
+              // ── Campo: precio ───────────────────────────────────────
+              const Text(
+                'Precio',
+                style: TextStyle(color: Color(0xFF888888), fontSize: 11),
+              ),
+              const SizedBox(height: 4),
+              TextField(
+                controller: precioCtrl,
+                keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true),
+                style: const TextStyle(color: Colors.white),
+                textInputAction: TextInputAction.done,
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(
+                      RegExp(r'^\d+\.?\d{0,2}')),
+                ],
+                decoration: InputDecoration(
+                  hintText: '0',
+                  hintStyle: const TextStyle(color: Color(0xFF555555)),
+                  prefixText: '\$ ',
+                  prefixStyle:
+                      const TextStyle(color: Color(0xFF888888)),
+                  filled: true,
+                  fillColor: const Color(0xFF242424),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 12),
+                ),
+                onSubmitted: (_) async {
+                  final desc   = descCtrl.text.trim();
+                  final precio = double.tryParse(
+                          precioCtrl.text.trim().replaceAll(',', '.')) ??
+                      0.0;
+                  if (desc.isEmpty) return;
                   await _guardarYContinuar(
-                    ctx, codigo, v.trim(),
+                    ctx, codigo, desc, precio,
                     setStateDialog,
                     () => guardando,
                     (val) => guardando = val,
@@ -432,10 +482,13 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
               onPressed: guardando
                   ? null
                   : () async {
-                      final desc = descCtrl.text.trim();
+                      final desc   = descCtrl.text.trim();
+                      final precio = double.tryParse(
+                              precioCtrl.text.trim().replaceAll(',', '.')) ??
+                          0.0;
                       if (desc.isEmpty) return;
                       await _guardarYContinuar(
-                        ctx, codigo, desc,
+                        ctx, codigo, desc, precio,
                         setStateDialog,
                         () => guardando,
                         (val) => guardando = val,
@@ -448,42 +501,69 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
     );
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // GUARDAR PRODUCTO NUEVO Y CONTINUAR AL DIÁLOGO DE CANTIDAD
+  // FIX 1: ean siempre recibe el código completo (se eliminó la condición > 7)
+  // FIX 2: el catch ya no silencia el error — lo muestra con alertaError()
+  // ─────────────────────────────────────────────────────────────────────────
   Future<void> _guardarYContinuar(
     BuildContext ctx,
     String codigo,
     String descripcion,
+    double precio,
     StateSetter setStateDialog,
     bool Function() getGuardando,
     void Function(bool) setGuardando,
   ) async {
     setStateDialog(() => setGuardando(true));
+
+    String? errorMsg;
+
     try {
-      await ApiService.guardarLibro(
-        ean: codigo.length > 7 ? codigo : '',
-        ref: codigo.length <= 7 ? codigo : '',
-        descripcion: descripcion,
+      final resultado = await ApiService.agregarProducto(
+        ean           : codigo,   // ← FIX 1: era "codigo.length > 7 ? codigo : ''"
+        descReferencia: descripcion,
+        precio        : precio,
       );
-    } catch (_) {
-      // Si la API falla, el libro igual se agrega localmente
+
+      // Si el servidor o el local rechazó completamente
+      if (resultado['status'] != 'ok') {
+        errorMsg = resultado['message']?.toString() ?? 'Error al guardar el producto';
+      }
+    } catch (e) {
+      // ← FIX 2: era "catch (_) {}" que tragaba el error en silencio
+      debugPrint('⚠ _guardarYContinuar excepción: $e');
+      errorMsg = 'Error de conexión al guardar el producto';
     } finally {
       setStateDialog(() => setGuardando(false));
     }
 
     if (!mounted) return;
+
+    // Cerrar el diálogo actual siempre
     Navigator.of(context).pop();
 
+    if (errorMsg != null) {
+      // Mostrar el error al usuario en lugar de ignorarlo
+      alertaError(context, errorMsg);
+      _foco.requestFocus();
+      return;
+    }
+
+    // ── Éxito: abrir diálogo de cantidad ──────────────────────────────
     _mostrarDialogoCantidad(
       {
-        'codigo':      codigo,
+        'codigo'     : codigo,
         'descripcion': descripcion,
-        'manual':      true,
+        'precio'     : precio,
+        'manual'     : true,
       },
       esNuevo: true,
     );
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // CONFIRMAR TRASPASO  ← ÚNICO CAMBIO: obtiene deviceId antes de navegar
+  // CONFIRMAR TRASPASO
   // ─────────────────────────────────────────────────────────────────────────
   Future<void> _confirmarTraspaso() async {
     final notifier = _notifier;
@@ -510,8 +590,6 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
                 res['numero_movimiento'].toString());
           }
 
-          // ✅ CORREGIDO: obtenemos el deviceId aquí, cuando la red ya funcionó,
-          // y lo pasamos a FacturaScreen para que no haga ninguna llamada de red.
           final deviceId = await DeviceService().getDeviceId();
           if (!mounted) return;
 

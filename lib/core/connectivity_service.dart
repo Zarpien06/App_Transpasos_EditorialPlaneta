@@ -1,6 +1,8 @@
+// lib/core/connectivity_service.dart
+
 import 'dart:async';
-import 'dart:io';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import '../services/api_service.dart';
 import '../services/sync_service.dart';
 
 class ConnectivityService {
@@ -20,42 +22,39 @@ class ConnectivityService {
   bool get isOnline => _isOnline;
 
   StreamSubscription? _subscription;
-  Timer? _pollingTimer; // ← NUEVO
+  Timer? _pollingTimer;
 
   bool _syncing = false;
 
-  // Cada cuánto revisar cuando NO hay internet (segundos)
+  // Polling cuando NO hay internet: cada 5 s (recuperación rápida)
+  // Polling cuando SÍ hay internet: cada 30 s (heartbeat suave)
   static const _pollOfflineSeconds = 5;
-  // Cada cuánto revisar cuando SÍ hay internet (segundos)
   static const _pollOnlineSeconds  = 30;
 
   Future<void> init() async {
     _isOnline = await checkOnline();
     _onlineController.add(_isOnline);
 
-    // Escuchar cambios de interfaz (igual que antes)
     _subscription =
         _connectivity.onConnectivityChanged.listen((results) async {
       await _evaluar(results);
     });
 
-    // Iniciar polling
     _startPolling();
   }
 
-  // ─── Polling ────────────────────────────────────────────────────────────
+  // ─── Polling ─────────────────────────────────────────────────────────────
 
   void _startPolling() {
     _pollingTimer?.cancel();
 
-    final interval = _isOnline
-        ? _pollOnlineSeconds
-        : _pollOfflineSeconds;
+    final interval =
+        _isOnline ? _pollOnlineSeconds : _pollOfflineSeconds;
 
     _pollingTimer = Timer(Duration(seconds: interval), () async {
       final results = await _connectivity.checkConnectivity();
       await _evaluar(results);
-      _startPolling(); // re-schedule (intervalo puede cambiar)
+      _startPolling(); // re-schedule: el intervalo puede haber cambiado
     });
   }
 
@@ -67,33 +66,38 @@ class ConnectivityService {
       return;
     }
 
-    final online = await _checkInternetReal();
+    // FIX: usar HTTP real en vez de DNS lookup.
+    // InternetAddress.lookup resuelve aunque el servidor esté caído o el
+    // proxy bloquee HTTP; ApiService.hayInternetReal() hace un HEAD directo.
+    final online         = await ApiService.hayInternetReal();
     final yaEstabaOnline = _isOnline;
 
     _update(online);
 
-    // Sincronizar solo al RECUPERAR conexión
+    // Sincronizar solo al RECUPERAR conexión, y solo subir:
+    // no tiene sentido hacer el GET de descarga en cada reconexión.
     if (online && !yaEstabaOnline) {
       await _sync();
     }
   }
 
-  // ─── Sync ────────────────────────────────────────────────────────────────
+  // ─── Sync ─────────────────────────────────────────────────────────────────
 
   Future<void> _sync() async {
     if (_syncing) return;
     _syncing = true;
     try {
-      await SyncService.sincronizarCompleto();
+      // soloSubida: true → omite el GET de descarga, solo vacía la cola.
+      await SyncService.sincronizarCompleto(soloSubida: true);
     } catch (_) {}
     _syncing = false;
   }
 
-  // ─── Helpers ─────────────────────────────────────────────────────────────
+  // ─── Helpers ──────────────────────────────────────────────────────────────
 
   bool _hasInterface(List<ConnectivityResult> results) {
-    return results.contains(ConnectivityResult.wifi)    ||
-           results.contains(ConnectivityResult.mobile)  ||
+    return results.contains(ConnectivityResult.wifi)     ||
+           results.contains(ConnectivityResult.mobile)   ||
            results.contains(ConnectivityResult.ethernet);
   }
 
@@ -105,25 +109,16 @@ class ConnectivityService {
     }
   }
 
-  Future<bool> _checkInternetReal() async {
-    try {
-      final result = await InternetAddress.lookup('prologics.co')
-          .timeout(const Duration(seconds: 5));
-      return result.isNotEmpty && result.first.rawAddress.isNotEmpty;
-    } catch (_) {
-      return false;
-    }
-  }
-
+  // checkOnline() también usa HTTP real para ser consistente.
   Future<bool> checkOnline() async {
     final results = await _connectivity.checkConnectivity();
     if (!_hasInterface(results)) return false;
-    return await _checkInternetReal();
+    return ApiService.hayInternetReal();
   }
 
   void dispose() {
     _subscription?.cancel();
-    _pollingTimer?.cancel(); // ← NUEVO
+    _pollingTimer?.cancel();
     _onlineController.close();
   }
 }

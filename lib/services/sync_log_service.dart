@@ -11,7 +11,7 @@ import '../core/database_service.dart';
 // MODELOS
 // ─────────────────────────────────────────────────────────────────────────────
 
-enum SyncLogTipo { descarga, subida, sistema }
+enum SyncLogTipo { descarga, subida, sistema, producto }
 
 enum SyncLogEstado { ok, omitido, fallido, enProceso }
 
@@ -80,6 +80,7 @@ class SyncLogEntry {
       case SyncLogTipo.descarga: return '↓ Descarga';
       case SyncLogTipo.subida:   return '↑ Subida';
       case SyncLogTipo.sistema:  return '⚙ Sistema';
+      case SyncLogTipo.producto: return '📦 Producto';
     }
   }
 }

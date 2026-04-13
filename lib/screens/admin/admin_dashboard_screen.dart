@@ -1,9 +1,10 @@
 // lib/screens/admin/admin_dashboard_screen.dart
 // ─────────────────────────────────────────────────────────────
-// Panel Admin — 3 secciones:
-//   🔒 Modo Kiosko     — local, sin red
-//   ⬇  Descargar datos — nube → BD local del dispositivo
-//   📋 Log traspasos   — historial local con estado de sync
+// Panel Admin — 4 secciones:
+//   🔒 Modo Kiosko       — local, sin red
+//   ⬇  Descargar datos   — nube → BD local del dispositivo
+//   📦 Productos pending — productos creados offline sin sync
+//   📋 Log traspasos     — historial local con estado de sync
 // ─────────────────────────────────────────────────────────────
 
 import 'package:flutter/material.dart';
@@ -12,6 +13,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/connectivity_service.dart';
 import '../../core/database_service.dart';
 import '../../services/sync_service.dart';
+import '../../services/api_service.dart';
 import '../../main.dart';
 import '../login_screen.dart';
 import '../../widgets/sync_log_panel.dart';
@@ -35,6 +37,11 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
   bool _logLoading = true;
   List<Map<String, dynamic>> _logTraspasos = [];
 
+  // ── Productos pendientes de sync ─────────────────────────────────────────
+  bool _productosLoading       = true;
+  bool _productosSyncLoading   = false;
+  List<Map<String, dynamic>> _productosPendientes = [];
+
   late AnimationController _animCtrl;
   late Animation<double>   _fadeAnim;
 
@@ -46,6 +53,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
     _fadeAnim = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
     _animCtrl.forward();
     _cargarLog();
+    _cargarProductosPendientes();
   }
 
   @override
@@ -55,7 +63,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
   }
 
   // ══════════════════════════════════════════════════════════
-  // CARGAR LOG
+  // CARGAR LOG DE TRASPASOS
   // ══════════════════════════════════════════════════════════
   Future<void> _cargarLog() async {
     setState(() => _logLoading = true);
@@ -66,6 +74,69 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
         _logTraspasos = data;
         _logLoading   = false;
       });
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // CARGAR PRODUCTOS PENDIENTES DE SYNC
+  // ══════════════════════════════════════════════════════════
+  Future<void> _cargarProductosPendientes() async {
+    setState(() => _productosLoading = true);
+    final db = DatabaseService();
+    final db_ = await db.database;
+    final rows = await db_.query(
+      'productos_local',
+      where: 'pendiente_sync = 1',
+      orderBy: 'id DESC',
+    );
+    if (mounted) {
+      setState(() {
+        _productosPendientes = rows.map((r) => Map<String, dynamic>.from(r)).toList();
+        _productosLoading    = false;
+      });
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // SINCRONIZAR PRODUCTOS PENDIENTES
+  // ══════════════════════════════════════════════════════════
+  Future<void> _sincronizarProductosPendientes() async {
+    if (_productosPendientes.isEmpty) return;
+
+    final online = ConnectivityService().isOnline;
+    if (!online) {
+      _showSnack('Sin conexión a internet', success: false);
+      return;
+    }
+
+    setState(() => _productosSyncLoading = true);
+
+    int ok      = 0;
+    int errores = 0;
+
+    for (final p in _productosPendientes) {
+      final result = await ApiService.agregarProducto(
+        ean           : p['EAN']?.toString()             ?? '',
+        descReferencia: p['Desc_Referencia']?.toString() ?? '',
+        precio        : (p['Precio'] as num?)?.toDouble() ?? 0,
+      );
+      if (result['status'] == 'ok') {
+        ok++;
+      } else {
+        errores++;
+      }
+    }
+
+    await _cargarProductosPendientes();
+
+    if (mounted) {
+      setState(() => _productosSyncLoading = false);
+      _showSnack(
+        errores == 0
+            ? '✅ $ok producto${ok == 1 ? '' : 's'} sincronizado${ok == 1 ? '' : 's'}'
+            : '⚠ $ok OK · $errores con error',
+        success: errores == 0,
+      );
     }
   }
 
@@ -420,7 +491,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
 
               const SizedBox(height: 28),
 
-              // ══ SINCRONIZACIÓN ═══════════════════════════
+              // ══ SINCRONIZACIÓN DE DATOS ═══════════════════
               _sectionLabel('SINCRONIZACIÓN DE DATOS'),
               const SizedBox(height: 12),
 
@@ -503,7 +574,14 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
 
               const SizedBox(height: 28),
 
-              // ══ PANEL DE SYNC (reemplaza el botón de sync) ══════════════
+              // ══ PRODUCTOS PENDIENTES DE SYNC ══════════════
+              _sectionLabel('PRODUCTOS PENDIENTES'),
+              const SizedBox(height: 12),
+              _productosPendientesCard(online),
+
+              const SizedBox(height: 28),
+
+              // ══ PANEL DE SYNC AUTOMÁTICO ═════════════════
               _sectionLabel('SINCRONIZACIÓN AUTOMÁTICA'),
               const SizedBox(height: 12),
               const SyncLogPanel(),
@@ -578,7 +656,201 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
     );
   }
 
-  // ── Log card individual — FIX OVERFLOW ───────────────────────────────────
+  // ══════════════════════════════════════════════════════════
+  // CARD PRODUCTOS PENDIENTES
+  // ══════════════════════════════════════════════════════════
+  Widget _productosPendientesCard(bool online) {
+    final cantidad = _productosPendientes.length;
+    final hayPendientes = cantidad > 0;
+
+    return _AdminCard(
+      icon:        Icons.inventory_2_outlined,
+      iconColor:   const Color(0xFF34D399), // emerald — mismo color del log tipo producto
+      title:       'Productos sin sincronizar',
+      subtitle:    'Creados offline · pendientes de subir a nube',
+      statusLabel: hayPendientes ? '$cantidad PENDIENTE${cantidad == 1 ? '' : 'S'}' : 'AL DÍA',
+      statusColor: hayPendientes ? Colors.orange : const Color(0xFF34D399),
+      child: Column(
+        children: [
+          const SizedBox(height: 14),
+
+          // ── Loading ────────────────────────────────────────────────────
+          if (_productosLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 20),
+              child: Center(
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: Color(0xFF34D399)),
+              ),
+            )
+
+          // ── Sin pendientes ─────────────────────────────────────────────
+          else if (!hayPendientes)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 18),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.check_circle_outline_rounded,
+                      color: Color(0xFF34D399), size: 18),
+                  SizedBox(width: 8),
+                  Text('Todos los productos están sincronizados',
+                      style: TextStyle(color: Colors.white54, fontSize: 13)),
+                ],
+              ),
+            )
+
+          // ── Lista de pendientes ────────────────────────────────────────
+          else ...[
+            // Hasta 3 filas visibles, el resto se intuye por el badge
+            ...(_productosPendientes.take(3).map((p) => _productoRow(p))),
+
+            if (cantidad > 3) ...[
+              const SizedBox(height: 6),
+              Center(
+                child: Text(
+                  '+ ${cantidad - 3} más pendiente${cantidad - 3 == 1 ? '' : 's'}',
+                  style: const TextStyle(color: Colors.white38, fontSize: 11),
+                ),
+              ),
+            ],
+
+            const SizedBox(height: 14),
+
+            // Botón sincronizar ahora
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                icon: _productosSyncLoading
+                    ? const SizedBox(
+                        width: 16, height: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white))
+                    : const Icon(Icons.cloud_upload_outlined),
+                label: Text(_productosSyncLoading
+                    ? 'Sincronizando...'
+                    : 'Sincronizar $cantidad producto${cantidad == 1 ? '' : 's'}'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: online
+                      ? const Color(0xFF34D399)
+                      : Colors.white24,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                ),
+                onPressed: (_productosSyncLoading || !online)
+                    ? null
+                    : _sincronizarProductosPendientes,
+              ),
+            ),
+
+            if (!online) ...[
+              const SizedBox(height: 8),
+              const Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.white38, size: 13),
+                  SizedBox(width: 6),
+                  Text(
+                    'Necesitas conexión para sincronizar',
+                    style: TextStyle(color: Colors.white38, fontSize: 11),
+                  ),
+                ],
+              ),
+            ],
+          ],
+
+          // Botón refrescar — siempre visible
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerRight,
+            child: GestureDetector(
+              onTap: _productosLoading ? null : _cargarProductosPendientes,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.refresh_rounded,
+                      color: _productosLoading ? Colors.white12 : Colors.white38,
+                      size: 14),
+                  const SizedBox(width: 4),
+                  Text('Actualizar',
+                      style: TextStyle(
+                          color: _productosLoading ? Colors.white12 : Colors.white38,
+                          fontSize: 11)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Fila individual de producto pendiente ─────────────────────────────────
+  Widget _productoRow(Map<String, dynamic> p) {
+    final ean   = p['EAN']?.toString()             ?? '—';
+    final desc  = p['Desc_Referencia']?.toString() ?? '—';
+    final precio = (p['Precio'] as num?)?.toDouble() ?? 0.0;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F1520),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.orange.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        children: [
+          // Icono pendiente
+          Container(
+            width: 30, height: 30,
+            decoration: BoxDecoration(
+              color: Colors.orange.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(Icons.cloud_upload_outlined,
+                color: Colors.orange, size: 15),
+          ),
+          const SizedBox(width: 10),
+          // Descripción + EAN
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  desc,
+                  style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'EAN: $ean',
+                  style: const TextStyle(color: Colors.white38, fontSize: 10),
+                ),
+              ],
+            ),
+          ),
+          // Precio
+          Text(
+            '\$${precio.toStringAsFixed(0)}',
+            style: const TextStyle(
+                color: Color(0xFF34D399),
+                fontSize: 12,
+                fontWeight: FontWeight.bold),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // LOG CARD INDIVIDUAL
+  // ══════════════════════════════════════════════════════════
   Widget _logCard(Map<String, dynamic> t) {
     final estado         = t['estado'] as String? ?? 'pendiente';
     final estadoColor    = _estadoColor(estado);
@@ -605,43 +877,31 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
       ),
       child: Column(
         children: [
-          // ── Cabecera ─────────────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-
-                // Número #id
                 Container(
-                  width: 38,
-                  height: 38,
+                  width: 38, height: 38,
                   decoration: BoxDecoration(
                     color: estadoColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                        color: estadoColor.withValues(alpha: 0.35)),
+                    border: Border.all(color: estadoColor.withValues(alpha: 0.35)),
                   ),
                   child: Center(
-                    child: Text(
-                      '#$id',
-                      style: TextStyle(
-                          color: estadoColor,
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold),
-                    ),
+                    child: Text('#$id',
+                        style: TextStyle(
+                            color: estadoColor,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold)),
                   ),
                 ),
-
                 const SizedBox(width: 10),
-
-                // FIX: Expanded envuelve toda la info central para
-                // que no empuje al badge y cause overflow
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Origen → Destino en dos líneas si no caben
                       Wrap(
                         crossAxisAlignment: WrapCrossAlignment.center,
                         spacing: 4,
@@ -650,79 +910,62 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
                           Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.store_outlined,
+                              const Icon(Icons.store_outlined,
                                   color: Colors.white38, size: 12),
                               const SizedBox(width: 3),
-                              Text(
-                                '$origenAlmacen  St.$origenStand',
-                                style: const TextStyle(
-                                    color: Colors.white70,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600),
-                              ),
+                              Text('$origenAlmacen  St.$origenStand',
+                                  style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600)),
                             ],
                           ),
-                          Icon(Icons.arrow_forward_rounded,
+                          const Icon(Icons.arrow_forward_rounded,
                               color: Colors.white24, size: 12),
-                          Text(
-                            '$destinoAlmacen  St.$destinoStand',
-                            style: const TextStyle(
-                                color: Colors.white70,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600),
-                          ),
+                          Text('$destinoAlmacen  St.$destinoStand',
+                              style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600)),
                         ],
                       ),
                       const SizedBox(height: 4),
-                      Text(
-                        fechaCreacion,
-                        style: const TextStyle(
-                            color: Colors.white38, fontSize: 10),
-                      ),
+                      Text(fechaCreacion,
+                          style: const TextStyle(
+                              color: Colors.white38, fontSize: 10)),
                     ],
                   ),
                 ),
-
                 const SizedBox(width: 8),
-
-                // Badge estado — tamaño fijo, no compite con el texto
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
                   decoration: BoxDecoration(
                     color: estadoColor.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                        color: estadoColor.withValues(alpha: 0.4)),
+                    border: Border.all(color: estadoColor.withValues(alpha: 0.4)),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(estadoIcon, color: estadoColor, size: 11),
                       const SizedBox(width: 4),
-                      Text(
-                        estadoLabel,
-                        style: TextStyle(
-                            color: estadoColor,
-                            fontSize: 9,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 0.3),
-                      ),
+                      Text(estadoLabel,
+                          style: TextStyle(
+                              color: estadoColor,
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.3)),
                     ],
                   ),
                 ),
               ],
             ),
           ),
-
-          // ── Pie: contadores + fecha sync ─────────────────────────────────
           Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: const BoxDecoration(
               color: Color(0xFF0F1520),
-              borderRadius:
-                  BorderRadius.vertical(bottom: Radius.circular(16)),
+              borderRadius: BorderRadius.vertical(bottom: Radius.circular(16)),
             ),
             child: Row(
               children: [
@@ -731,27 +974,21 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
                 _miniChip('$totalLibros libros', Colors.greenAccent),
                 const Spacer(),
                 if (fechaSync != null)
-                  Row(
-                    children: [
-                      const Icon(Icons.cloud_done_outlined,
-                          color: Colors.greenAccent, size: 11),
-                      const SizedBox(width: 4),
-                      Text(fechaSync,
-                          style: const TextStyle(
-                              color: Colors.greenAccent, fontSize: 9)),
-                    ],
-                  )
+                  Row(children: [
+                    const Icon(Icons.cloud_done_outlined,
+                        color: Colors.greenAccent, size: 11),
+                    const SizedBox(width: 4),
+                    Text(fechaSync,
+                        style: const TextStyle(
+                            color: Colors.greenAccent, fontSize: 9)),
+                  ])
                 else
-                  const Row(
-                    children: [
-                      Icon(Icons.schedule_rounded,
-                          color: Colors.orange, size: 11),
-                      SizedBox(width: 4),
-                      Text('En espera',
-                          style:
-                              TextStyle(color: Colors.orange, fontSize: 9)),
-                    ],
-                  ),
+                  const Row(children: [
+                    Icon(Icons.schedule_rounded, color: Colors.orange, size: 11),
+                    SizedBox(width: 4),
+                    Text('En espera',
+                        style: TextStyle(color: Colors.orange, fontSize: 9)),
+                  ]),
               ],
             ),
           ),
@@ -765,12 +1002,10 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
         child: const Center(
           child: Column(
             children: [
-              Icon(Icons.receipt_long_outlined,
-                  color: Colors.white12, size: 52),
+              Icon(Icons.receipt_long_outlined, color: Colors.white12, size: 52),
               SizedBox(height: 12),
               Text('Sin traspasos registrados',
-                  style:
-                      TextStyle(color: Colors.white38, fontSize: 14)),
+                  style: TextStyle(color: Colors.white38, fontSize: 14)),
               SizedBox(height: 4),
               Text('Los traspasos aparecerán aquí al generarse',
                   style: TextStyle(color: Colors.white24, fontSize: 12)),
@@ -785,8 +1020,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
     required Color color,
   }) =>
       Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
           color: color.withValues(alpha: 0.08),
           borderRadius: BorderRadius.circular(10),
@@ -796,19 +1030,15 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
           children: [
             Text(value,
                 style: TextStyle(
-                    color: color,
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold)),
+                    color: color, fontSize: 14, fontWeight: FontWeight.bold)),
             Text(label,
-                style: const TextStyle(
-                    color: Colors.white38, fontSize: 9)),
+                style: const TextStyle(color: Colors.white38, fontSize: 9)),
           ],
         ),
       );
 
   Widget _miniChip(String label, Color color) => Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
         decoration: BoxDecoration(
           color: color.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(6),
@@ -816,9 +1046,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
         ),
         child: Text(label,
             style: TextStyle(
-                color: color,
-                fontSize: 9,
-                fontWeight: FontWeight.w600)),
+                color: color, fontSize: 9, fontWeight: FontWeight.w600)),
       );
 
   Widget _sectionLabel(String label) => Text(label,
@@ -833,8 +1061,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
           Icon(icon, color: Colors.white38, size: 15),
           const SizedBox(width: 8),
           Text(text,
-              style: const TextStyle(
-                  color: Colors.white54, fontSize: 12)),
+              style: const TextStyle(color: Colors.white54, fontSize: 12)),
         ],
       );
 
@@ -844,9 +1071,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
           color: (ok ? Colors.green : Colors.red).withValues(alpha: 0.08),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color:
-                (ok ? Colors.green : Colors.red).withValues(alpha: 0.3),
-          ),
+              color: (ok ? Colors.green : Colors.red).withValues(alpha: 0.3)),
         ),
         child: Text(msg,
             style: TextStyle(
@@ -895,8 +1120,7 @@ class _AdminCard extends StatelessWidget {
             Row(
               children: [
                 Container(
-                  width: 44,
-                  height: 44,
+                  width: 44, height: 44,
                   decoration: BoxDecoration(
                     color: iconColor.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(12),
@@ -926,8 +1150,8 @@ class _AdminCard extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: statusColor.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                          color: statusColor.withValues(alpha: 0.5)),
+                      border:
+                          Border.all(color: statusColor.withValues(alpha: 0.5)),
                     ),
                     child: Text(statusLabel,
                         style: TextStyle(

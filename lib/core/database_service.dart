@@ -22,7 +22,7 @@ class DatabaseService {
     final path   = join(dbPath, 'feria_traspasos.db');
     return await openDatabase(
       path,
-      version: 4,
+      version: 5,          // ← bumped de 4 a 5
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -113,6 +113,20 @@ class DatabaseService {
       ''');
       await db.execute('DROP TABLE traspasos_local_v3');
     }
+    if (oldVersion < 5) {
+      // Agrega Porc_impuesto y pendiente_sync a la tabla de productos.
+      // Se usa IF NOT EXISTS para que sea idempotente en caso de re-ejecución.
+      try {
+        await db.execute(
+          'ALTER TABLE productos_local ADD COLUMN Porc_impuesto REAL DEFAULT 0',
+        );
+      } catch (_) {}
+      try {
+        await db.execute(
+          'ALTER TABLE productos_local ADD COLUMN pendiente_sync INTEGER DEFAULT 0',
+        );
+      } catch (_) {}
+    }
   }
 
   Future<void> _crearTablaAdmin(Database db) async {
@@ -137,7 +151,9 @@ class DatabaseService {
         Cantidad         INTEGER,
         Autor            TEXT,
         Sello_Editorial  TEXT,
-        Familia          INTEGER
+        Familia          INTEGER,
+        Porc_impuesto    REAL    DEFAULT 0,
+        pendiente_sync   INTEGER DEFAULT 0
       )
     ''');
   }
@@ -174,43 +190,41 @@ class DatabaseService {
 
   Future<String?> getConfig(String clave) async {
     final db   = await database;
-    final rows = await db.query('config', where: 'clave = ?', whereArgs: [clave]);
+    final rows = await db.query('config',
+        where: 'clave = ?', whereArgs: [clave]);
     if (rows.isEmpty) return null;
     return rows.first['valor'] as String?;
   }
-  
-  // ─────────────────────────────────────────────
-  // CONSECUTIVO POR DISPOSITIVO (manuma)
-  // ─────────────────────────────────────────────
+
+  // ─── Consecutivo por dispositivo (manuma) ─────────────────────────────────
+
   Future<int> getNextManuma(String deviceId) async {
-  final db = await database;
-  final clave = 'contador_$deviceId';
+    final db    = await database;
+    final clave = 'contador_$deviceId';
 
-  return await db.transaction((txn) async {
-    final rows = await txn.query(
-      'config',
-      where: 'clave = ?',
-      whereArgs: [clave],
-      limit: 1,
-    );
+    return await db.transaction((txn) async {
+      final rows = await txn.query(
+        'config',
+        where: 'clave = ?',
+        whereArgs: [clave],
+        limit: 1,
+      );
 
-    int actual = 0;
+      int actual = 0;
+      if (rows.isNotEmpty) {
+        actual = int.tryParse(rows.first['valor'].toString()) ?? 0;
+      }
 
-    if (rows.isNotEmpty) {
-      actual = int.tryParse(rows.first['valor'].toString()) ?? 0;
-    }
+      final siguiente = actual + 1;
+      await txn.insert(
+        'config',
+        {'clave': clave, 'valor': siguiente.toString()},
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
 
-    final siguiente = actual + 1;
-
-    await txn.insert(
-      'config',
-      {'clave': clave, 'valor': siguiente.toString()},
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
-
-    return siguiente;
-   });
-   }
+      return siguiente;
+    });
+  }
 
   // ════════════════════════════════════════════════════════════════════════════
   // ADMIN LOCAL
@@ -315,6 +329,8 @@ class DatabaseService {
           'Autor'          : p['Autor'],
           'Sello_Editorial': p['Sello_Editorial'],
           'Familia'        : p['Familia'],
+          'Porc_impuesto'  : p['Porc_impuesto'] ?? 0,
+          'pendiente_sync' : 0,
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
@@ -327,29 +343,87 @@ class DatabaseService {
     return await db.query('productos_local');
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // INSERTAR O ACTUALIZAR PRODUCTO INDIVIDUAL
+  // ─────────────────────────────────────────────────────────────────────────
+  // Usado por ApiService.agregarProducto() y buscarLibro() para cachear
+  // productos nuevos sin borrar el catálogo completo.
+  //
+  // Campos requeridos: EAN, Desc_Referencia, Precio
+  // Campos opcionales con defaults: ISBN='', Referencia='999999',
+  //   Porc_impuesto=0, pendiente_sync=0
+  //
+  // Si el EAN ya existe → actualiza Desc_Referencia, Precio y pendiente_sync.
+  // Si no existe → inserta con todos los campos.
+
+  Future<void> insertarOActualizarProducto(
+      Map<String, dynamic> producto) async {
+    final db  = await database;
+    final ean = producto['EAN']?.toString().trim() ?? '';
+
+    if (ean.isEmpty) return;
+
+    // ── Buscar si ya existe por EAN ───────────────────────────────────
+    final existentes = await db.query(
+      'productos_local',
+      where: 'EAN = ?',
+      whereArgs: [ean],
+      limit: 1,
+    );
+
+    if (existentes.isNotEmpty) {
+      // Actualizar solo los campos que pueden cambiar
+      await db.update(
+        'productos_local',
+        {
+          'Desc_Referencia': producto['Desc_Referencia'] ?? existentes.first['Desc_Referencia'],
+          'Precio'         : producto['Precio']          ?? existentes.first['Precio'],
+          'Porc_impuesto'  : producto['Porc_impuesto']   ?? existentes.first['Porc_impuesto'] ?? 0,
+          'pendiente_sync' : producto['pendiente_sync']  ?? 0,
+        },
+        where: 'EAN = ?',
+        whereArgs: [ean],
+      );
+    } else {
+      // Insertar nuevo — id es autoincrement cuando no se pasa
+      await db.insert(
+        'productos_local',
+        {
+          'ISBN'           : producto['ISBN']            ?? '',
+          'EAN'            : ean,
+          'Referencia'     : producto['Referencia']      ?? '999999',
+          'Desc_Referencia': producto['Desc_Referencia'] ?? '',
+          'Precio'         : producto['Precio']          ?? 0,
+          'Cantidad'       : null,
+          'Autor'          : '',
+          'Sello_Editorial': '',
+          'Familia'        : null,
+          'Porc_impuesto'  : producto['Porc_impuesto']   ?? 0,
+          'pendiente_sync' : producto['pendiente_sync']  ?? 0,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+  }
+
   // ════════════════════════════════════════════════════════════════════════════
   // TRASPASOS
   // ════════════════════════════════════════════════════════════════════════════
 
-  /// Inserta un traspaso y retorna el id autoincrement generado por SQLite.
-  /// Ese id es el número corto que se muestra en el ticket (1, 2, 3…).
   Future<int> insertarTraspasoReturnId(Map<String, dynamic> datos) async {
-  final db = await database;
+    final db = await database;
 
-   if (!datos.containsKey('device_id')) {
-     throw Exception('device_id es obligatorio');
-   }
- 
-   final id = await db.insert(
-     'traspasos_local',
-     datos,
-     conflictAlgorithm: ConflictAlgorithm.replace,
-   );
- 
-    return id;
-   }
+    if (!datos.containsKey('device_id')) {
+      throw Exception('device_id es obligatorio');
+    }
 
-  /// Mantiene compatibilidad con código que no necesita el id de retorno.
+    return await db.insert(
+      'traspasos_local',
+      datos,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
   Future<void> insertarTraspaso(Map<String, dynamic> datos) async {
     await insertarTraspasoReturnId(datos);
   }
@@ -387,9 +461,8 @@ class DatabaseService {
   // LOG DE TRASPASOS — para el panel admin
   // ════════════════════════════════════════════════════════════════════════════
 
-  /// Devuelve los últimos [limite] traspasos (todos los estados) con sus
-  /// líneas decodificadas y conteos. Usado por el log del admin dashboard.
-  Future<List<Map<String, dynamic>>> getUltimosTraspasos({int limite = 30}) async {
+  Future<List<Map<String, dynamic>>> getUltimosTraspasos(
+      {int limite = 30}) async {
     final db = await database;
 
     final traspasos = await db.query(
@@ -403,7 +476,6 @@ class DatabaseService {
     for (final t in traspasos) {
       final uuid = t['local_uuid'] as String;
 
-      // Contar líneas y sumar cantidades
       final lineas = await db.query(
         'lineas_local',
         where: 'traspaso_uuid = ?',
@@ -411,7 +483,7 @@ class DatabaseService {
       );
 
       final totalLibros = lineas.fold<int>(
-        0, (sum, l) => sum + ((l['cantidad'] as int?) ?? 0));
+          0, (sum, l) => sum + ((l['cantidad'] as int?) ?? 0));
 
       Map<String, dynamic> origen  = {};
       Map<String, dynamic> destino = {};
@@ -514,12 +586,18 @@ class DatabaseService {
   // ════════════════════════════════════════════════════════════════════════════
 
   Future<List<Map<String, dynamic>>> getTraspasosPendientesConLineas() async {
-    final db        = await database;
-    final traspasos = await db.query(
-      'traspasos_local',
-      where: "estado = 'pendiente'",
-      orderBy: 'fecha_creacion ASC',
-    );
+    final db = await database;
+
+    final traspasos = await db.rawQuery('''
+      SELECT
+        t.*,
+        COALESCE(q.intentos,     0)    AS q_intentos,
+        COALESCE(q.ultimo_error, '')   AS q_ultimo_error
+      FROM traspasos_local t
+      LEFT JOIN sync_queue q ON q.traspaso_uuid = t.local_uuid
+      WHERE t.estado = 'pendiente'
+      ORDER BY q.intentos ASC, t.fecha_creacion ASC
+    ''');
 
     final resultado = <Map<String, dynamic>>[];
 
@@ -545,6 +623,8 @@ class DatabaseService {
         'origen_decoded' : origen,
         'destino_decoded': destino,
         'lineas'         : lineas,
+        'intentos'       : t['q_intentos'],
+        'ultimo_error'   : t['q_ultimo_error'],
       });
     }
 

@@ -76,6 +76,7 @@ class _SyncLogPanelState extends State<SyncLogPanel> {
       case SyncLogTipo.descarga: return const Color(0xFF38BDF8); // sky-400
       case SyncLogTipo.subida:   return const Color(0xFFA78BFA); // violet-400
       case SyncLogTipo.sistema:  return const Color(0xFF94A3B8); // slate-400
+      case SyncLogTipo.producto: return const Color(0xFF34D399); // emerald-400
     }
   }
 
@@ -282,7 +283,7 @@ class _LogTile extends StatelessWidget {
           ),
         ],
       ),
-     
+
       // Si no hay nada que expandir, deshabilitamos la expansión
       onExpansionChanged: (entry.detalle == null &&
               entry.uuid == null &&
@@ -301,7 +302,7 @@ class _LogTile extends StatelessWidget {
       ],
     );
   }
-  
+
   String _formatTimestamp(DateTime dt) {
     final h = dt.hour.toString().padLeft(2, '0');
     final m = dt.minute.toString().padLeft(2, '0');

@@ -209,7 +209,9 @@ class _DestinoScreenState extends ConsumerState<DestinoScreen> {
                   Expanded(
                     child: ElevatedButton.icon(
                       icon: const Icon(Icons.arrow_forward_rounded),
-                      label: const Text('Continuar'),
+                      label: FittedBox(
+                        child: const Text('Continuar'),
+                      ),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF1565C0),
                       ),
