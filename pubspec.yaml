@@ -10,10 +10,11 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # 🔥 Estado (mejor que provider)
+  # 🔥 Estado 
   flutter_riverpod: ^2.5.1
   uuid: ^4.3.3
-  # 🌐 Red PRO (mejor que http)
+
+  # 🌐 Red 
   dio: ^5.4.0
   retry: ^3.1.2
 
@@ -82,6 +83,7 @@ flutter_native_splash:
     color_dark: "#121212"
     icon_background_color: "#FFFFFF"
     icon_background_color_dark: "#121212"
+
 # ─────────────────────────────────────────────
 # 📱 ICONO APP
 # ─────────────────────────────────────────────

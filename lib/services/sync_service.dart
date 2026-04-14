@@ -350,6 +350,36 @@ class SyncService {
     }
   }
 
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // SUBIR PRODUCTOS PENDIENTES DE SYNC (creados offline)
+  // ──────────────────────────────────────────────────────────────────────────
+  static Future<void> subirProductosPendientes() async {
+    final db  = DatabaseService();
+    final db_ = await db.database;
+  
+    final pendientes = await db_.query(
+      'productos_local',
+      where: 'pendiente_sync = 1',
+      orderBy: 'id ASC',
+    );
+  
+    if (pendientes.isEmpty) return;
+  
+    debugPrint('📦 Auto-sync: ${pendientes.length} producto(s) pendiente(s)');
+  
+    for (final p in pendientes) {
+      final result = await ApiService.agregarProducto(
+        ean           : p['EAN']?.toString()              ?? '',
+        descReferencia: p['Desc_Referencia']?.toString()  ?? '',
+        precio        : (p['Precio'] as num?)?.toDouble() ?? 0,
+      );
+      debugPrint(result['status'] == 'ok'
+          ? '✅ Producto sync OK: ${p['Desc_Referencia']}'
+          : '⚠ Producto sync falló: ${result['message']}');
+    }
+  }
+
   // ──────────────────────────────────────────────────────────────────────────
   // SINCRONIZACIÓN COMPLETA
   //

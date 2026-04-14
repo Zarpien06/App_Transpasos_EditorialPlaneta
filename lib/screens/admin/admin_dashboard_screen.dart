@@ -14,6 +14,7 @@ import '../../core/connectivity_service.dart';
 import '../../core/database_service.dart';
 import '../../services/sync_service.dart';
 import '../../services/api_service.dart';
+import '../../services/sync_log_service.dart'; // ← AÑADIDO
 import '../../main.dart';
 import '../login_screen.dart';
 import '../../widgets/sync_log_panel.dart';
@@ -115,15 +116,36 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
     int errores = 0;
 
     for (final p in _productosPendientes) {
+      // ── AÑADIDO: registrar inicio en el log ──────────────
+      await SyncLogService().agregar(
+        tipo:    SyncLogTipo.producto,
+        estado:  SyncLogEstado.enProceso,
+        mensaje: 'Subiendo: ${p['Desc_Referencia'] ?? p['EAN']}',
+      );
+
       final result = await ApiService.agregarProducto(
         ean           : p['EAN']?.toString()             ?? '',
         descReferencia: p['Desc_Referencia']?.toString() ?? '',
         precio        : (p['Precio'] as num?)?.toDouble() ?? 0,
       );
+
       if (result['status'] == 'ok') {
         ok++;
+        // ── AÑADIDO: marcar ok en el log ─────────────────
+        await SyncLogService().actualizarUltimo(
+          tipo:         SyncLogTipo.producto,
+          nuevoEstado:  SyncLogEstado.ok,
+          nuevoMensaje: '✓ ${p['Desc_Referencia'] ?? p['EAN']}',
+        );
       } else {
         errores++;
+        // ── AÑADIDO: marcar error en el log ──────────────
+        await SyncLogService().actualizarUltimo(
+          tipo:         SyncLogTipo.producto,
+          nuevoEstado:  SyncLogEstado.fallido,
+          nuevoMensaje: '✗ ${p['Desc_Referencia'] ?? p['EAN']}',
+          detalle:      result.toString(),
+        );
       }
     }
 
@@ -321,8 +343,18 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 14),
                     ),
-                    child: Text(confirmText),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        confirmText,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w600),
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -665,7 +697,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
 
     return _AdminCard(
       icon:        Icons.inventory_2_outlined,
-      iconColor:   const Color(0xFF34D399), // emerald — mismo color del log tipo producto
+      iconColor:   const Color(0xFF34D399),
       title:       'Productos sin sincronizar',
       subtitle:    'Creados offline · pendientes de subir a nube',
       statusLabel: hayPendientes ? '$cantidad PENDIENTE${cantidad == 1 ? '' : 'S'}' : 'AL DÍA',
@@ -702,7 +734,6 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
 
           // ── Lista de pendientes ────────────────────────────────────────
           else ...[
-            // Hasta 3 filas visibles, el resto se intuye por el badge
             ...(_productosPendientes.take(3).map((p) => _productoRow(p))),
 
             if (cantidad > 3) ...[
@@ -717,7 +748,6 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
 
             const SizedBox(height: 14),
 
-            // Botón sincronizar ahora
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
@@ -788,8 +818,8 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
 
   // ── Fila individual de producto pendiente ─────────────────────────────────
   Widget _productoRow(Map<String, dynamic> p) {
-    final ean   = p['EAN']?.toString()             ?? '—';
-    final desc  = p['Desc_Referencia']?.toString() ?? '—';
+    final ean    = p['EAN']?.toString()             ?? '—';
+    final desc   = p['Desc_Referencia']?.toString() ?? '—';
     final precio = (p['Precio'] as num?)?.toDouble() ?? 0.0;
 
     return Container(
@@ -802,7 +832,6 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
       ),
       child: Row(
         children: [
-          // Icono pendiente
           Container(
             width: 30, height: 30,
             decoration: BoxDecoration(
@@ -813,7 +842,6 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
                 color: Colors.orange, size: 15),
           ),
           const SizedBox(width: 10),
-          // Descripción + EAN
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -835,7 +863,6 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
               ],
             ),
           ),
-          // Precio
           Text(
             '\$${precio.toStringAsFixed(0)}',
             style: const TextStyle(

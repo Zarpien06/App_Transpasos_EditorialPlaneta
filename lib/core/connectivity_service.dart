@@ -84,15 +84,16 @@ class ConnectivityService {
   // ─── Sync ─────────────────────────────────────────────────────────────────
 
   Future<void> _sync() async {
-    if (_syncing) return;
-    _syncing = true;
-    try {
-      // soloSubida: true → omite el GET de descarga, solo vacía la cola.
-      await SyncService.sincronizarCompleto(soloSubida: true);
-    } catch (_) {}
-    _syncing = false;
-  }
-
+     if (_syncing) return;
+       _syncing = true;
+     try {
+       // 1. Subir traspasos pendientes
+       await SyncService.sincronizarCompleto(soloSubida: true);
+       // 2. Subir productos creados offline
+        await SyncService.subirProductosPendientes();
+     } catch (_) {}
+      _syncing = false;
+  }   
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
   bool _hasInterface(List<ConnectivityResult> results) {

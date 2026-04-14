@@ -1,9 +1,4 @@
 // lib/main.dart
-//
-// Cambios respecto a la versión anterior:
-// 1. Se inicializa SyncLogService en el arranque (antes del sync inicial).
-// 2. SincronizarCompleto() ya no necesita botón — ConnectivityService
-//    lo llama al detectar internet y en el polling de 30 s.
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -16,7 +11,7 @@ import 'core/pdf_fonts.dart';
 import 'core/connectivity_service.dart';
 import 'core/device_service.dart';
 import 'services/sync_service.dart';
-import 'services/sync_log_service.dart';   // ← NUEVO
+import 'services/sync_log_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/init_screen.dart';
 import 'widgets/kiosk_wrapper.dart';
@@ -27,25 +22,26 @@ Future<void> main() async {
   final binding = WidgetsFlutterBinding.ensureInitialized();
   FlutterNativeSplash.preserve(widgetsBinding: binding);
 
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-  ]);
+  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
-  // ── Inicializar servicios en paralelo ────────────────────────────────────
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    statusBarColor: Color.fromARGB(0, 255, 255, 255),
+    statusBarIconBrightness: Brightness.dark,
+    systemNavigationBarColor: Colors.white,
+    systemNavigationBarIconBrightness: Brightness.dark,
+  ));
+
   await Future.wait([
     PdfFonts.load(),
-    SyncLogService().init(),          // ← NUEVO: crea tabla y carga historial
-    ConnectivityService().init(),     // ya dispara sincronizarCompleto si hay red
+    SyncLogService().init(),
+    ConnectivityService().init(),
   ]);
 
   final inicializado = await DeviceService().estaInicializado();
-
   runApp(ProviderScope(child: MyApp(inicializado: inicializado)));
 }
 
-final kioskProvider = ChangeNotifierProvider<KioskService>((ref) {
-  return KioskService();
-});
+final kioskProvider = ChangeNotifierProvider<KioskService>((ref) => KioskService());
 
 class MyApp extends ConsumerStatefulWidget {
   final bool inicializado;
@@ -56,9 +52,6 @@ class MyApp extends ConsumerStatefulWidget {
 }
 
 class _MyAppState extends ConsumerState<MyApp> {
-  // ConnectivityService ya llamó sincronizarCompleto() al init() si había red.
-  // Aquí hacemos un intento adicional post-frame por si el init fue muy rápido
-  // y la interfaz aún no estaba lista.
   bool _syncInicialHecho = false;
 
   @override
@@ -78,16 +71,14 @@ class _MyAppState extends ConsumerState<MyApp> {
       try {
         await kiosk.cargarEstadoPersistido();
 
-        // Solo ejecuta si ConnectivityService no lo hizo ya
         if (!_syncInicialHecho) {
           _syncInicialHecho = true;
-          // Fire-and-forget: no bloquea el splash
           SyncService.sincronizarCompleto().ignore();
         }
       } catch (e) {
         debugPrint('Error inicialización: $e');
       } finally {
-        FlutterNativeSplash.remove();
+        FlutterNativeSplash.remove(); // ← directo al login
       }
     });
   }
@@ -95,12 +86,12 @@ class _MyAppState extends ConsumerState<MyApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title                   : 'Traspasos Planeta',
+      title: 'Traspasos Planeta',
       debugShowCheckedModeBanner: false,
-      navigatorKey            : navigatorKey,
-      theme                   : appTheme,
-      builder                 : (context, child) => KioskWrapper(child: child!),
-      home                    : widget.inicializado
+      navigatorKey: navigatorKey,
+      theme: appTheme,
+      builder: (context, child) => KioskWrapper(child: child!),
+      home: widget.inicializado
           ? const LoginScreen()
           : const InitScreen(),
     );
