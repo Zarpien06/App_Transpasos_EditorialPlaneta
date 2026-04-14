@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../main.dart';
+import 'kiosk_status_bar.dart';
+import 'kiosk_alert_overlay.dart';
 
 class KioskWrapper extends ConsumerStatefulWidget {
   final Widget child;
@@ -28,7 +30,6 @@ class _KioskWrapperState extends ConsumerState<KioskWrapper>
     super.dispose();
   }
 
-  // Si minimiza y vuelve → re-aplicar immersive
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final kiosk = ref.read(kioskProvider);
@@ -43,8 +44,6 @@ class _KioskWrapperState extends ConsumerState<KioskWrapper>
 
     if (!kiosk.isKioskActive) return widget.child;
 
-    // ✅ Solo bloquea el botón atrás del sistema (físico/gesto)
-    // No bloquea la navegación interna de Flutter (Navigator.pop)
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
@@ -54,7 +53,17 @@ class _KioskWrapperState extends ConsumerState<KioskWrapper>
         behavior: HitTestBehavior.translucent,
         onTap:       () => kiosk.registerActivity(),
         onPanUpdate: (_) => kiosk.registerActivity(),
-        child: widget.child,
+        child: Stack(
+          children: [
+            Column(
+              children: [
+                const KioskStatusBar(),
+                Expanded(child: widget.child),
+              ],
+            ),
+            const KioskAlertOverlay(),
+          ],
+        ),
       ),
     );
   }

@@ -51,6 +51,8 @@ dependencies:
   # 📱 Info de la app
   package_info_plus: ^9.0.0
 
+  battery_plus: ^6.0.0
+  
   # 🧠 Modo kiosco
   kiosk_mode: ^0.8.0
 

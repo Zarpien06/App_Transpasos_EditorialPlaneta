@@ -9,6 +9,7 @@ import 'core/theme.dart';
 import 'core/kiosk_service.dart';
 import 'core/pdf_fonts.dart';
 import 'core/connectivity_service.dart';
+import 'core/battery_service.dart';
 import 'core/device_service.dart';
 import 'services/sync_service.dart';
 import 'services/sync_log_service.dart';
@@ -35,6 +36,7 @@ Future<void> main() async {
     PdfFonts.load(),
     SyncLogService().init(),
     ConnectivityService().init(),
+    BatteryService().init(),           // ← nuevo
   ]);
 
   final inicializado = await DeviceService().estaInicializado();
@@ -78,7 +80,7 @@ class _MyAppState extends ConsumerState<MyApp> {
       } catch (e) {
         debugPrint('Error inicialización: $e');
       } finally {
-        FlutterNativeSplash.remove(); // ← directo al login
+        FlutterNativeSplash.remove();
       }
     });
   }
