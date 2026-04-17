@@ -7,6 +7,7 @@
 //       • Sin red (WiFi off)
 //       • WiFi conectado SIN internet → aviso naranja "WiFi sin internet"
 //       • WiFi conectado CON internet → verde "Online"
+//   📛 Nombre del dispositivo (device_id) leído desde DeviceService
 //
 // Solo se renderiza cuando KioskService.isKioskActive == true.
 // Se inserta en la parte superior del KioskWrapper.
@@ -18,6 +19,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/battery_service.dart';
 import '../core/connectivity_service.dart';
+import '../core/device_service.dart'; // 👈 NUEVO: para leer el device_id
 import '../main.dart'; // kioskProvider
 
 class KioskStatusBar extends ConsumerStatefulWidget {
@@ -39,6 +41,11 @@ class _KioskStatusBarState extends ConsumerState<KioskStatusBar> {
   //   _hasInternet   → hay salida real a internet (ConnectivityService.isOnline)
   bool _hasInterface  = false;
   bool _hasInternet   = ConnectivityService().isOnline;
+
+  // ─── Estado dispositivo ────────────────────────────────────────────────────
+  // Se carga una sola vez en initState desde DeviceService (singleton cacheado).
+  // Muestra el device_id configurado al inicializar la app (ej: "DV05").
+  String _deviceId = '';
 
   // ─── Subscriptions ─────────────────────────────────────────────────────────
   StreamSubscription? _levelSub;
@@ -78,6 +85,9 @@ class _KioskStatusBarState extends ConsumerState<KioskStatusBar> {
 
     // Leer estado inicial de interfaz
     _initInterface();
+
+    // 👈 NUEVO: Leer el device_id guardado en la base de datos
+    _loadDeviceId();
   }
 
   Future<void> _initInterface() async {
@@ -86,6 +96,12 @@ class _KioskStatusBarState extends ConsumerState<KioskStatusBar> {
                   results.contains(ConnectivityResult.mobile)   ||
                   results.contains(ConnectivityResult.ethernet);
     if (mounted) setState(() => _hasInterface = hasIf);
+  }
+
+  // 👈 NUEVO: Carga el device_id desde DeviceService (singleton, valor cacheado)
+  Future<void> _loadDeviceId() async {
+    final id = await DeviceService().getDeviceId();
+    if (mounted) setState(() => _deviceId = id);
   }
 
   @override
@@ -130,7 +146,7 @@ class _KioskStatusBarState extends ConsumerState<KioskStatusBar> {
           const Icon(Icons.lock_outline_rounded, color: Color(0xFF4F8CFF), size: 14),
           const SizedBox(width: 6),
           const Text(
-            'KIOSCO',
+            '',
             style: TextStyle(
               color: Color(0xFF4F8CFF),
               fontSize: 10,
@@ -141,6 +157,22 @@ class _KioskStatusBarState extends ConsumerState<KioskStatusBar> {
 
           // ── Separador ─────────────────────────────────────────────────────
           const _Divider(),
+
+          // ── Nombre del dispositivo 👈 NUEVO ───────────────────────────────
+          // Muestra el device_id (ej: "DV05") configurado al inicializar la app.
+          // Solo se renderiza si ya fue cargado (no vacío).
+          if (_deviceId.isNotEmpty) ...[
+            Text(
+              _deviceId,
+              style: const TextStyle(
+                color: Color(0xFFCBD5E1),
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.8,
+              ),
+            ),
+            const _Divider(),
+          ],
 
           // ── Indicador de conexión ─────────────────────────────────────────
           _ConnectionIndicator(state: _connectionState),

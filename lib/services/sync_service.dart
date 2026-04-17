@@ -1,5 +1,6 @@
 // lib/services/sync_service.dart
 
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
@@ -61,10 +62,102 @@ class SyncResultadoSubida {
 
 class SyncService {
   static final _log = SyncLogService();
-  static bool _running = false;
+  static bool _running        = false;
+  static bool _subidaEnCurso  = false;
+  static bool _descargaEnCurso = false;
 
-  // Reintentos con backoff exponencial
-  // Intentos: 0 ms → 2 s → 4 s → 8 s (cap 30 s)
+  // ── Timers separados ──────────────────────────────────────────────────────
+  // • _timerSubida  : cada 30 s  → solo sube traspasos pendientes (liviano)
+  // • _timerDescarga: cada 2 min → descarga productos/admin/usuarios (pesado)
+  static Timer? _timerSubida;
+  static Timer? _timerDescarga;
+  static String? _autoSyncStand;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // INICIAR AUTO-SYNC (idempotente)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /// Arranca los dos timers en background.
+  /// Llamar una sola vez desde main.dart después del splash.
+  static void iniciarAutoSync({String? stand}) {
+    _autoSyncStand = stand;
+
+    // ── Timer subida: cada 30 segundos ────────────────────────────────────
+    if (!(_timerSubida?.isActive ?? false)) {
+      debugPrint('⬆ Auto-sync subida iniciado (cada 30 s)');
+
+      _timerSubida = Timer.periodic(const Duration(seconds: 30), (_) async {
+        if (_subidaEnCurso) return; // ya hay una en curso, omitir
+
+        final hayInternet = await ApiService.hayInternetReal();
+        if (!hayInternet) {
+          debugPrint('📵 Auto-sync subida: sin internet, omitiendo');
+          await _log.agregar(
+            tipo   : SyncLogTipo.subida,
+            estado : SyncLogEstado.omitido,
+            mensaje: 'Sin internet — subida omitida',
+          );
+          return;
+        }
+
+        _subidaEnCurso = true;
+        debugPrint('⬆ Auto-sync subida: ejecutando…');
+        try {
+          await subir();
+          debugPrint('✅ Auto-sync subida: completada');
+        } catch (e) {
+          debugPrint('⚠ Auto-sync subida: error — $e');
+        } finally {
+          _subidaEnCurso = false;
+        }
+      });
+    }
+
+    // ── Timer descarga: cada 2 minutos ────────────────────────────────────
+    if (!(_timerDescarga?.isActive ?? false)) {
+      debugPrint('⬇ Auto-sync descarga iniciado (cada 2 min)');
+
+      _timerDescarga = Timer.periodic(const Duration(minutes: 2), (_) async {
+        if (_descargaEnCurso) return; // ya hay una en curso, omitir
+
+        final hayInternet = await ApiService.hayInternetReal();
+        if (!hayInternet) {
+          debugPrint('📵 Auto-sync descarga: sin internet, omitiendo');
+          await _log.agregar(
+            tipo   : SyncLogTipo.descarga,
+            estado : SyncLogEstado.omitido,
+            mensaje: 'Sin internet — descarga omitida',
+          );
+          return;
+        }
+
+        _descargaEnCurso = true;
+        debugPrint('⬇ Auto-sync descarga: ejecutando…');
+        try {
+          await descargar(stand: _autoSyncStand);
+          debugPrint('✅ Auto-sync descarga: completada');
+        } catch (e) {
+          debugPrint('⚠ Auto-sync descarga: error — $e');
+        } finally {
+          _descargaEnCurso = false;
+        }
+      });
+    }
+  }
+
+  /// Detiene ambos timers.
+  static void detenerAutoSync() {
+    _timerSubida?.cancel();
+    _timerSubida = null;
+    _timerDescarga?.cancel();
+    _timerDescarga = null;
+    debugPrint('⏹ Auto-sync detenido');
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // BACKOFF EXPONENCIAL
+  // ─────────────────────────────────────────────────────────────────────────
+
   static const int _maxReintentos = 3;
   static const int _backoffBaseMs = 2000;
   static const int _backoffCapMs  = 30000;
@@ -74,9 +167,9 @@ class SyncService {
     return Duration(milliseconds: ms);
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
   // DESCARGA
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
 
   static Future<SyncResultadoDescarga> descargar({String? stand}) async {
     await _log.agregar(
@@ -229,16 +322,9 @@ class SyncService {
     }
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // SUBIDA — delega totalmente en ApiService.subirDatos()
-  //
-  // FIX: ya no construye movimientos aquí. subirDatos() tiene los lotes,
-  // el FIX 3 (batch de _tamanoLote traspasos) y el FIX 4 (omitidos no
-  // bloquean la marca como sincronizado). Este método solo agrega:
-  //   • verificación de pendientes antes de llamar
-  //   • backoff exponencial en caso de error de red
-  //   • logging en SyncLogService
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // SUBIDA
+  // ─────────────────────────────────────────────────────────────────────────
 
   static Future<SyncResultadoSubida> subir() async {
     await _log.agregar(
@@ -283,10 +369,7 @@ class SyncService {
 
         result = await ApiService.subirDatos();
 
-        if (result['status'] == 'ok' || result['status'] == 'partial') {
-          // éxito total o parcial: no reintentar
-          break;
-        }
+        if (result['status'] == 'ok' || result['status'] == 'partial') break;
 
         debugPrint(
           '⚠ subirDatos() → ${result['status']}: ${result['message']}',
@@ -297,16 +380,16 @@ class SyncService {
         }
       }
 
-      final res = result!;
+      final res    = result!;
       final status  = res['status']?.toString()  ?? 'error';
       final mensaje = res['message']?.toString()  ?? 'Sin respuesta';
 
-      final resHmoval = (res['resumen']?['hmoval'] as Map<String, dynamic>?) ?? {};
-      final insertados   = (resHmoval['insertados'] ?? 0) as int;
-      final omitidos     = (resHmoval['omitidos']   ?? 0) as int;
-      final fallidos     = (resHmoval['fallidos']   ?? 0) as int;
-      final sincronizados = (res['sincronizados']   ?? 0) as int;
-      final pendientes    = (res['pendientes']      ?? 0) as int;
+      final resHmoval     = (res['resumen']?['hmoval'] as Map<String, dynamic>?) ?? {};
+      final insertados    = (resHmoval['insertados'] ?? 0) as int;
+      final omitidos      = (resHmoval['omitidos']   ?? 0) as int;
+      final fallidos      = (resHmoval['fallidos']   ?? 0) as int;
+      final sincronizados = (res['sincronizados']    ?? 0) as int;
+      final pendientes    = (res['pendientes']       ?? 0) as int;
 
       if (status == 'ok' || status == 'partial') {
         await _log.actualizarUltimo(
@@ -350,24 +433,23 @@ class SyncService {
     }
   }
 
-
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
   // SUBIR PRODUCTOS PENDIENTES DE SYNC (creados offline)
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
   static Future<void> subirProductosPendientes() async {
     final db  = DatabaseService();
     final db_ = await db.database;
-  
+
     final pendientes = await db_.query(
       'productos_local',
       where: 'pendiente_sync = 1',
       orderBy: 'id ASC',
     );
-  
+
     if (pendientes.isEmpty) return;
-  
+
     debugPrint('📦 Auto-sync: ${pendientes.length} producto(s) pendiente(s)');
-  
+
     for (final p in pendientes) {
       final result = await ApiService.agregarProducto(
         ean           : p['EAN']?.toString()              ?? '',
@@ -380,13 +462,9 @@ class SyncService {
     }
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // SINCRONIZACIÓN COMPLETA
-  //
-  // [soloSubida]: si true, omite la descarga cuando solo quieres vaciar
-  // la cola de pendientes sin gastar ancho de banda en el GET de descarga.
-  // Útil al llamar desde registrarTraspaso() justo después de guardar.
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // SINCRONIZACIÓN COMPLETA (descarga + subida, para llamada manual)
+  // ─────────────────────────────────────────────────────────────────────────
 
   static Future<({
     SyncResultadoDescarga? descarga,
@@ -435,9 +513,7 @@ class SyncService {
 
       await _log.actualizarUltimo(
         tipo        : SyncLogTipo.sistema,
-        nuevoEstado : ok
-            ? SyncLogEstado.ok
-            : SyncLogEstado.omitido,
+        nuevoEstado : ok ? SyncLogEstado.ok : SyncLogEstado.omitido,
         nuevoMensaje: ok
             ? 'Sincronización completada'
             : 'Sincronización con advertencias',

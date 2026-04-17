@@ -23,3 +23,23 @@ void alertaConfirmar(BuildContext ctx, String msg, VoidCallback onSi) {
     btnCancelText: "No",
   ).show();
 }
+
+// ── Alerta de error de impresión con botón Reimprimir ────────────────────────
+void alertaErrorImpresion(
+  BuildContext ctx, {
+  required VoidCallback onReintentar,
+}) {
+  AwesomeDialog(
+    context: ctx,
+    dialogType: DialogType.warning,
+    title: 'Error al imprimir',
+    desc: 'No se pudo completar la impresión.\n\n'
+        '• Verifique que la impresora esté encendida\n'
+        '• Verifique que haya papel\n'
+        '• Verifique la conexión Bluetooth/USB',
+    btnCancelText: 'Cancelar',
+    btnCancelOnPress: () {},
+    btnOkText: 'Reimprimir',
+    btnOkOnPress: onReintentar,
+  ).show();
+}

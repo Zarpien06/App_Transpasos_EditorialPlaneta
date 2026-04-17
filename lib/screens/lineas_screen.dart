@@ -207,11 +207,9 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           title: Row(
             children: [
-              Icon(
-                esNuevo
-                    ? Icons.add_circle_outline_rounded
-                    : Icons.book_rounded,
-                color: const Color(0xFF29B6F6),
+              const Icon(
+                Icons.book_rounded,
+                color: Color(0xFF29B6F6),
                 size: 20,
               ),
               const SizedBox(width: 8),
@@ -327,238 +325,93 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // DIÁLOGO: libro no encontrado → ingresar nombre Y precio
+  // DIÁLOGO: libro no encontrado → solo informativo, sin creación manual
   // ─────────────────────────────────────────────────────────────────────────
   void _mostrarDialogoNoEncontrado(String codigo) {
-    if (_notifier.existe(codigo)) {
-      _mostrarDialogoYaExiste({'codigo': codigo});
-      return;
-    }
-
-    final descCtrl   = TextEditingController();
-    final precioCtrl = TextEditingController();
-    bool guardando   = false;
-
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setStateDialog) => AlertDialog(
-          backgroundColor: const Color(0xFF1A1A1A),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Row(
-            children: [
-              Icon(Icons.help_outline_rounded,
-                  color: Color(0xFFFFA726), size: 22),
-              SizedBox(width: 8),
-              Expanded(
-                child: Text('No encontrado', style: TextStyle(fontSize: 15)),
-              ),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // ── Código escaneado ────────────────────────────────────
-              Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF242424),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  'Código: $codigo',
-                  style: const TextStyle(
-                      color: Color(0xFF90CAF9), fontSize: 12),
-                ),
-              ),
-              const SizedBox(height: 14),
-              const Text(
-                'Ingresa los datos del libro\npara guardarlo en la base de datos:',
-                style: TextStyle(color: Color(0xFFBBBBBB), fontSize: 12),
-              ),
-              const SizedBox(height: 12),
-
-              // ── Campo: nombre del libro ─────────────────────────────
-              const Text(
-                'Nombre del libro',
-                style: TextStyle(color: Color(0xFF888888), fontSize: 11),
-              ),
-              const SizedBox(height: 4),
-              TextField(
-                controller: descCtrl,
-                autofocus: true,
-                style: const TextStyle(color: Colors.white),
-                textInputAction: TextInputAction.next,
-                decoration: InputDecoration(
-                  hintText: 'Descripción del libro...',
-                  hintStyle: const TextStyle(color: Color(0xFF555555)),
-                  filled: true,
-                  fillColor: const Color(0xFF242424),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide.none,
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 12),
-                ),
-              ),
-              const SizedBox(height: 12),
-
-              // ── Campo: precio ───────────────────────────────────────
-              const Text(
-                'Precio',
-                style: TextStyle(color: Color(0xFF888888), fontSize: 11),
-              ),
-              const SizedBox(height: 4),
-              TextField(
-                controller: precioCtrl,
-                keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true),
-                style: const TextStyle(color: Colors.white),
-                textInputAction: TextInputAction.done,
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(
-                      RegExp(r'^\d+\.?\d{0,2}')),
-                ],
-                decoration: InputDecoration(
-                  hintText: '0',
-                  hintStyle: const TextStyle(color: Color(0xFF555555)),
-                  prefixText: '\$ ',
-                  prefixStyle:
-                      const TextStyle(color: Color(0xFF888888)),
-                  filled: true,
-                  fillColor: const Color(0xFF242424),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide.none,
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 12),
-                ),
-                onSubmitted: (_) async {
-                  final desc   = descCtrl.text.trim();
-                  final precio = double.tryParse(
-                          precioCtrl.text.trim().replaceAll(',', '.')) ??
-                      0.0;
-                  if (desc.isEmpty) return;
-                  await _guardarYContinuar(
-                    ctx, codigo, desc, precio,
-                    setStateDialog,
-                    () => guardando,
-                    (val) => guardando = val,
-                  );
-                },
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: guardando
-                  ? null
-                  : () {
-                      Navigator.pop(ctx);
-                      _foco.requestFocus();
-                    },
-              child: const Text('Cancelar',
-                  style: TextStyle(color: Color(0xFF888888))),
-            ),
-            ElevatedButton.icon(
-              icon: guardando
-                  ? const SizedBox(
-                      width: 14, height: 14,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white))
-                  : const Icon(Icons.save_rounded, size: 16),
-              label: Text(guardando ? 'Guardando...' : 'Guardar'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1565C0),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10)),
-              ),
-              onPressed: guardando
-                  ? null
-                  : () async {
-                      final desc   = descCtrl.text.trim();
-                      final precio = double.tryParse(
-                              precioCtrl.text.trim().replaceAll(',', '.')) ??
-                          0.0;
-                      if (desc.isEmpty) return;
-                      await _guardarYContinuar(
-                        ctx, codigo, desc, precio,
-                        setStateDialog,
-                        () => guardando,
-                        (val) => guardando = val,
-                      );
-                    },
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A1A),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.search_off_rounded, color: Color(0xFFFFA726), size: 22),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text('Libro no encontrado',
+                  style: TextStyle(fontSize: 15)),
             ),
           ],
         ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFF242424),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                'Código: $codigo',
+                style: const TextStyle(
+                    color: Color(0xFF90CAF9), fontSize: 12),
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Este libro no está registrado en el sistema.',
+              style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 10),
+            _infoRow(
+              Icons.wifi_rounded,
+              'Verifica tu conexión a internet para sincronizar la información.',
+            ),
+            const SizedBox(height: 8),
+            _infoRow(
+              Icons.qr_code_scanner_rounded,
+              'Vuelve a escanear el código del libro.',
+            ),
+          ],
+        ),
+        actions: [
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1565C0),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () {
+              Navigator.pop(ctx);
+              _foco.requestFocus();
+            },
+            child: const Text('Entendido'),
+          ),
+        ],
       ),
     );
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // GUARDAR PRODUCTO NUEVO Y CONTINUAR AL DIÁLOGO DE CANTIDAD
-  // FIX 1: ean siempre recibe el código completo (se eliminó la condición > 7)
-  // FIX 2: el catch ya no silencia el error — lo muestra con alertaError()
-  // ─────────────────────────────────────────────────────────────────────────
-  Future<void> _guardarYContinuar(
-    BuildContext ctx,
-    String codigo,
-    String descripcion,
-    double precio,
-    StateSetter setStateDialog,
-    bool Function() getGuardando,
-    void Function(bool) setGuardando,
-  ) async {
-    setStateDialog(() => setGuardando(true));
-
-    String? errorMsg;
-
-    try {
-      final resultado = await ApiService.agregarProducto(
-        ean           : codigo,   // ← FIX 1: era "codigo.length > 7 ? codigo : ''"
-        descReferencia: descripcion,
-        precio        : precio,
-      );
-
-      // Si el servidor o el local rechazó completamente
-      if (resultado['status'] != 'ok') {
-        errorMsg = resultado['message']?.toString() ?? 'Error al guardar el producto';
-      }
-    } catch (e) {
-      // ← FIX 2: era "catch (_) {}" que tragaba el error en silencio
-      debugPrint('⚠ _guardarYContinuar excepción: $e');
-      errorMsg = 'Error de conexión al guardar el producto';
-    } finally {
-      setStateDialog(() => setGuardando(false));
-    }
-
-    if (!mounted) return;
-
-    // Cerrar el diálogo actual siempre
-    Navigator.of(context).pop();
-
-    if (errorMsg != null) {
-      // Mostrar el error al usuario en lugar de ignorarlo
-      alertaError(context, errorMsg);
-      _foco.requestFocus();
-      return;
-    }
-
-    // ── Éxito: abrir diálogo de cantidad ──────────────────────────────
-    _mostrarDialogoCantidad(
-      {
-        'codigo'     : codigo,
-        'descripcion': descripcion,
-        'precio'     : precio,
-        'manual'     : true,
-      },
-      esNuevo: true,
+  Widget _infoRow(IconData icon, String texto) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 15, color: const Color(0xFF29B6F6)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            texto,
+            style: const TextStyle(color: Color(0xFFBBBBBB), fontSize: 12),
+          ),
+        ),
+      ],
     );
   }
 
@@ -893,8 +746,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
                       separatorBuilder: (_, __) =>
                           const Divider(color: Color(0xFF242424), height: 1),
                       itemBuilder: (context, i) {
-                        final item     = state.items[i];
-                        final esManual = item['manual'] == true;
+                        final item = state.items[i];
 
                         return ListTile(
                           contentPadding: const EdgeInsets.symmetric(
@@ -902,18 +754,12 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
                           leading: Container(
                             width: 36, height: 36,
                             decoration: BoxDecoration(
-                              color: esManual
-                                  ? const Color(0xFF4A1080).withValues(alpha: 0.25)
-                                  : const Color(0xFF0D47A1).withValues(alpha: 0.25),
+                              color: const Color(0xFF0D47A1).withValues(alpha: 0.25),
                               borderRadius: BorderRadius.circular(8),
                             ),
-                            child: Icon(
-                              esManual
-                                  ? Icons.edit_rounded
-                                  : Icons.book_rounded,
-                              color: esManual
-                                  ? const Color(0xFFCE93D8)
-                                  : const Color(0xFF29B6F6),
+                            child: const Icon(
+                              Icons.book_rounded,
+                              color: Color(0xFF29B6F6),
                               size: 18,
                             ),
                           ),
@@ -924,32 +770,10 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
-                          subtitle: Row(
-                            children: [
-                              Text(
-                                item['codigo']?.toString() ?? '',
-                                style: const TextStyle(
-                                    color: Color(0xFF888888), fontSize: 11),
-                              ),
-                              if (esManual) ...[
-                                const SizedBox(width: 6),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 5, vertical: 1),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF4A1080)
-                                        .withValues(alpha: 0.35),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: const Text(
-                                    'nuevo',
-                                    style: TextStyle(
-                                        color: Color(0xFFCE93D8),
-                                        fontSize: 10),
-                                  ),
-                                ),
-                              ],
-                            ],
+                          subtitle: Text(
+                            item['codigo']?.toString() ?? '',
+                            style: const TextStyle(
+                                color: Color(0xFF888888), fontSize: 11),
                           ),
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,

@@ -74,9 +74,10 @@ class _MyAppState extends ConsumerState<MyApp> {
         await kiosk.cargarEstadoPersistido();
 
         if (!_syncInicialHecho) {
-          _syncInicialHecho = true;
-          SyncService.sincronizarCompleto().ignore();
-        }
+        _syncInicialHecho = true;
+        SyncService.sincronizarCompleto().ignore();
+        SyncService.iniciarAutoSync();
+      }
       } catch (e) {
         debugPrint('Error inicialización: $e');
       } finally {

@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../core/connectivity_service.dart';
 import '../core/database_service.dart';
 import '../core/device_service.dart';
-import '../services/sync_log_service.dart';  // ← NUEVO
+import '../services/sync_log_service.dart';
 
 class ApiService {
   static const String _baseUrl =
@@ -14,7 +14,6 @@ class ApiService {
   static const String urlDescargar =
       '$_baseUrl/descarga_datos_nube_movil2.php';
 
-  // ── Un solo endpoint para movimientos Y productos ────────────────────────
   static const String urlSubir =
       '$_baseUrl/subir_datos_nube_movil.php';
 
@@ -26,7 +25,11 @@ class ApiService {
     ),
   );
 
-  static const int _tamanoLote = 5;
+  // ── Lote grande + paralelismo ─────────────────────────────────────────────
+  // 5 → 50: 10x menos requests HTTP por ciclo de subida
+  static const int _tamanoLote    = 50;
+  // Máximo de lotes enviados al mismo tiempo (paralelo controlado)
+  static const int _lotesParalelo = 3;
 
   // ─────────────────────────────────────────────
   // HELPERS INTERNOS
@@ -116,11 +119,11 @@ class ApiService {
   }
 
   // ─────────────────────────────────────────────
-  // SUBIR DATOS — CON ENVÍO POR LOTES
+  // SUBIR DATOS — LOTES GRANDES + PARALELO
   // ─────────────────────────────────────────────
 
   static Future<Map<String, dynamic>> subirDatos() async {
-    final db = DatabaseService();
+    final db       = DatabaseService();
     final traspasos = await db.getTraspasosPendientesConLineas();
 
     if (traspasos.isEmpty) {
@@ -140,35 +143,26 @@ class ApiService {
     int totalFallidos   = 0;
     final uuidsSincronizados = <String>[];
 
+    // ── Construir todos los lotes primero ────────────────────────────────────
+    // Cada entrada: { movimientos, uuids }
+    final lotes = <({List<Map<String, dynamic>> movimientos, List<String> uuids})>[];
+
     for (var i = 0; i < traspasos.length; i += _tamanoLote) {
-      final lote = traspasos.sublist(i, min(i + _tamanoLote, traspasos.length));
+      final grupo = traspasos.sublist(i, min(i + _tamanoLote, traspasos.length));
+      final movimientos = <Map<String, dynamic>>[];
+      final uuidsLote   = <String>[];
 
-      debugPrint(
-        '📦 Lote ${(i ~/ _tamanoLote) + 1} → '
-        '${lote.length} traspasos (índices $i–${i + lote.length - 1})',
-      );
-
-      final movimientos  = <Map<String, dynamic>>[];
-      final manucaAUuid  = <String, String>{};
-      final uuidsDelLote = <String>[];
-
-      for (final t in lote) {
+      for (final t in grupo) {
         final lineas = t['lineas'] as List;
         final uuid   = t['local_uuid'] as String;
 
-        final fecha = (t['fecha_creacion'] as String? ?? '')
+        final fecha  = (t['fecha_creacion'] as String? ?? '')
             .replaceAll(RegExp(r'[^0-9]'), '');
-
         final numMov = t['num_movimiento']?.toString() ??
                        DateTime.now().millisecondsSinceEpoch.toString();
         final base   = '${deviceId}_$numMov';
 
-        manucaAUuid[base] = uuid;
-        uuidsDelLote.add(uuid);
-
-        debugPrint(
-          '   📄 Traspaso uuid=$uuid | base=$base | líneas=${lineas.length}',
-        );
+        uuidsLote.add(uuid);
 
         for (var j = 0; j < lineas.length; j++) {
           final linea = lineas[j] as Map<String, dynamic>;
@@ -200,74 +194,84 @@ class ApiService {
         }
       }
 
-      debugPrint('   📤 Movimientos en lote: ${movimientos.length}');
+      lotes.add((movimientos: movimientos, uuids: uuidsLote));
+    }
 
-      Map<String, dynamic> result;
-      try {
-        final response = await _dio.post(
-          urlSubir,
-          data: {'movimientos': movimientos},
-          options: Options(headers: {'Content-Type': 'application/json'}),
-        );
-        result = await _handle(Future.value(response));
-      } catch (e) {
-        debugPrint('❌ Lote falló por red: $e — deteniendo sync');
-        return {
-          'status' : 'error',
-          'message': 'Lote falló: $e',
-          'resumen': {
-            'hmoval': {
-              'insertados': totalInsertados,
-              'omitidos'  : totalOmitidos,
-              'fallidos'  : totalFallidos + lote.length,
-            }
-          }
-        };
-      }
+    debugPrint(
+      '📦 Subida: ${traspasos.length} traspasos → '
+      '${lotes.length} lote(s) de hasta $_tamanoLote · '
+      'paralelo: $_lotesParalelo',
+    );
 
-      if (result['status'] != 'ok') {
-        debugPrint('❌ Servidor rechazó el lote: ${result['message']}');
-        break;
-      }
-
-      final resumen    = result['resumen']  as Map<String, dynamic>? ?? {};
-      final resHmoval  = resumen['hmoval']  as Map<String, dynamic>? ?? {};
-      final fallidos   = (resHmoval['fallidos']   ?? 0) as int;
-      final omitidos   = (resHmoval['omitidos']   ?? 0) as int;
-      final insertados = (resHmoval['insertados'] ?? 0) as int;
-
-      totalInsertados += insertados;
-      totalOmitidos   += omitidos;
-      totalFallidos   += fallidos;
+    // ── Enviar lotes en grupos paralelos ─────────────────────────────────────
+    for (var i = 0; i < lotes.length; i += _lotesParalelo) {
+      final grupo = lotes.sublist(i, min(i + _lotesParalelo, lotes.length));
+      final numGrupo = (i ~/ _lotesParalelo) + 1;
 
       debugPrint(
-        '   📊 Lote → insertados: $insertados | omitidos: $omitidos | fallidos: $fallidos',
+        '🚀 Grupo $numGrupo: enviando ${grupo.length} lote(s) en paralelo…',
       );
 
-      if (omitidos > 0 && kDebugMode) {
-        final detalles = resumen['detalle']          as List? ??
-                         resumen['omitidos_detalle']  as List? ??
-                         result['detalle']            as List? ??
-                         result['omitidos_detalle']   as List? ??
-                         [];
-        debugPrint('   ⚠ $omitidos omitido(s):');
-        for (final d in detalles) {
-          if (d is Map) {
-            debugPrint(
-              '     🔸 manuca=${d['manuca']} | línea=${d['manuml']} '
-              '| código=${d['macdpt']} | motivo=${d['motivo'] ?? d['razon']}',
-            );
+      // Lanzar todos los lotes del grupo al mismo tiempo
+      final futures = grupo.map((lote) async {
+        try {
+          final response = await _dio.post(
+            urlSubir,
+            data: {'movimientos': lote.movimientos},
+            options: Options(headers: {'Content-Type': 'application/json'}),
+          );
+          return (
+            result : await _handle(Future.value(response)),
+            uuids  : lote.uuids,
+            ok     : true,
+          );
+        } catch (e) {
+          debugPrint('❌ Lote falló por red: $e');
+          return (
+            result : <String, dynamic>{'status': 'error', 'message': '$e'},
+            uuids  : lote.uuids,
+            ok     : false,
+          );
+        }
+      }).toList();
+
+      final resultados = await Future.wait(futures);
+
+      // Procesar resultados del grupo
+      for (final r in resultados) {
+        if (!r.ok || r.result['status'] == 'error') {
+          totalFallidos += r.uuids.length;
+          debugPrint('❌ Lote rechazado: ${r.result['message']}');
+          continue;
+        }
+
+        final resumen   = r.result['resumen']  as Map<String, dynamic>? ?? {};
+        final resHmoval = resumen['hmoval']     as Map<String, dynamic>? ?? {};
+        final ins = (resHmoval['insertados'] ?? 0) as int;
+        final omi = (resHmoval['omitidos']   ?? 0) as int;
+        final fal = (resHmoval['fallidos']   ?? 0) as int;
+
+        totalInsertados += ins;
+        totalOmitidos   += omi;
+        totalFallidos   += fal;
+
+        debugPrint('   📊 ins: $ins | omi: $omi | fal: $fal');
+
+        if (fal == 0) {
+          uuidsSincronizados.addAll(r.uuids);
+        }
+
+        if (omi > 0 && kDebugMode) {
+          final detalles = resumen['omitidos_detalle'] as List? ??
+                           r.result['omitidos_detalle'] as List? ?? [];
+          for (final d in detalles) {
+            if (d is Map) {
+              debugPrint(
+                '     🔸 manuca=${d['manuca']} | motivo=${d['motivo'] ?? d['razon']}',
+              );
+            }
           }
         }
-      }
-
-      if (fallidos == 0) {
-        uuidsSincronizados.addAll(uuidsDelLote);
-        debugPrint('   ✅ Lote marcado como sincronizado (${uuidsDelLote.length} traspasos)');
-      } else {
-        debugPrint(
-          '   ⚠ Lote con $fallidos fallido(s) — traspasos quedan pendientes',
-        );
       }
     }
 
@@ -488,7 +492,6 @@ class ApiService {
   static Future<Map<String, dynamic>> buscarLibro(String codigo) async {
     final codigoNorm = codigo.trim();
 
-    // ── 1. Buscar en local ─────────────────────────────────────────────
     try {
       final db = DatabaseService();
       final productos = await db.getProductos();
@@ -515,7 +518,6 @@ class ApiService {
       debugPrint('⚠ Error buscando libro en local: $e');
     }
 
-    // ── 2. Buscar en nube si hay internet ──────────────────────────────
     debugPrint('🔍 Libro no en local, buscando en nube: $codigoNorm');
     final hayInternet = await hayInternetReal();
 
@@ -527,7 +529,6 @@ class ApiService {
     }
 
     try {
-      // GET al mismo urlSubir con ?ean=xxx  ← el PHP maneja GET con ?ean=
       final response = await _dio.get(
         urlSubir,
         queryParameters: {'ean': codigoNorm},
@@ -543,7 +544,6 @@ class ApiService {
         final p = result['producto'] as Map<String, dynamic>;
         debugPrint('✅ Libro encontrado en NUBE: ${p['Desc_Referencia']}');
 
-        // Cachear en local
         try {
           final db = DatabaseService();
           await db.insertarOActualizarProducto({
@@ -584,14 +584,6 @@ class ApiService {
   // ─────────────────────────────────────────────
   // AGREGAR PRODUCTO — NUBE + LOCAL + LOG
   // ─────────────────────────────────────────────
-  // POST { action: "agregar_producto", EAN, Desc_Referencia, Precio }
-  // El PHP detecta "action" y bifurca al bloque agregar_producto.
-  // Respuesta exitosa del PHP:
-  //   { status: "ok", producto: { id, EAN, Referencia, Desc_Referencia,
-  //                               Precio, accion: "insertado"|"actualizado" } }
-  //
-  // Cada resultado queda registrado en SyncLogService con tipo=producto
-  // y es visible en tiempo real en el SyncLogPanel del admin dashboard.
 
   static Future<Map<String, dynamic>> agregarProducto({
     required String ean,
@@ -600,7 +592,7 @@ class ApiService {
   }) async {
     final eanNorm  = ean.trim();
     final descNorm = descReferencia.trim();
-    final log      = SyncLogService();  // ← instancia del log
+    final log      = SyncLogService();
 
     if (eanNorm.isEmpty || descNorm.isEmpty) {
       return {'status': 'error', 'message': 'EAN y descripción son requeridos'};
@@ -608,7 +600,6 @@ class ApiService {
 
     final hayInternet = await hayInternetReal();
 
-    // ── Sin internet: guardar solo en local con pendiente_sync = 1 ────
     if (!hayInternet) {
       debugPrint('📵 Sin internet — guardando producto solo en local');
       try {
@@ -623,7 +614,6 @@ class ApiService {
           'pendiente_sync' : 1,
         });
 
-        // ── LOG: guardado offline, pendiente de sync ───────────────────
         await log.agregar(
           tipo   : SyncLogTipo.producto,
           estado : SyncLogEstado.omitido,
@@ -646,8 +636,6 @@ class ApiService {
       }
     }
 
-    // ── Con internet: POST { action: "agregar_producto", ... } ────────
-    // El PHP bifurca en: if (isset($data['action']) && $data['action'] === 'agregar_producto')
     try {
       debugPrint('📤 Enviando producto a nube: EAN=$eanNorm');
       final response = await _dio.post(
@@ -667,29 +655,21 @@ class ApiService {
 
       final result = await _handle(Future.value(response));
 
-      // ── Servidor rechazó el producto ──────────────────────────────
       if (result['status'] != 'ok') {
         debugPrint('❌ Servidor rechazó producto: ${result['message']}');
-
-        // ── LOG: error del servidor ────────────────────────────────
         await log.agregar(
           tipo   : SyncLogTipo.producto,
           estado : SyncLogEstado.fallido,
           mensaje: '$descNorm — servidor rechazó el producto',
           detalle: 'EAN: $eanNorm | Error: ${result['message']}',
         );
-
         return result;
       }
 
-      // ── Producto procesado OK en nube ─────────────────────────────
-      // PHP responde: { status:"ok", producto:{ id, EAN, Referencia,
-      //                Desc_Referencia, Precio, accion:"insertado"|"actualizado" } }
       final p      = result['producto'] as Map<String, dynamic>? ?? {};
-      final accion = p['accion']?.toString() ?? 'procesado'; // "insertado" o "actualizado"
+      final accion = p['accion']?.toString() ?? 'procesado';
       debugPrint('✅ Producto $accion en nube: ID=${p['id']}');
 
-      // Guardar/actualizar en local con pendiente_sync = 0
       try {
         final db = DatabaseService();
         await db.insertarOActualizarProducto({
@@ -699,14 +679,13 @@ class ApiService {
           'Desc_Referencia': descNorm,
           'Precio'         : precio,
           'Porc_impuesto'  : 0,
-          'pendiente_sync' : 0,          // ← ya sincronizado
+          'pendiente_sync' : 0,
         });
         debugPrint('💾 Producto guardado en local');
       } catch (e) {
         debugPrint('⚠ No se pudo guardar en local (no crítico): $e');
       }
 
-      // ── LOG: éxito — muestra si fue insertado o actualizado ───────
       await log.agregar(
         tipo   : SyncLogTipo.producto,
         estado : SyncLogEstado.ok,
@@ -728,15 +707,12 @@ class ApiService {
       };
     } catch (e) {
       debugPrint('⚠ Error al agregar producto: $e');
-
-      // ── LOG: excepción de red u otro error ────────────────────────
       await log.agregar(
         tipo   : SyncLogTipo.producto,
         estado : SyncLogEstado.fallido,
         mensaje: '$descNorm — error al conectar con el servidor',
         detalle: 'EAN: $eanNorm | Excepción: $e',
       );
-
       return {'status': 'error', 'message': 'Error al agregar producto: $e'};
     }
   }
