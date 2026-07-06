@@ -1,4 +1,8 @@
 ﻿// lib/screens/destino_screen.dart
+//
+// CAMBIO: se agregó _validando como debounce en _validar() para que una
+// segunda lectura del scanner mientras ya se está procesando la primera
+// no dispare una segunda validación ni una segunda alerta.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -19,7 +23,8 @@ class DestinoScreen extends ConsumerStatefulWidget {
 
 class _DestinoScreenState extends ConsumerState<DestinoScreen> {
   final _clave = TextEditingController();
-  bool _loading = false;
+  bool _loading   = false;
+  bool _validando = false; // 🛡️ debounce: bloquea doble scan
 
   @override
   void dispose() {
@@ -36,7 +41,6 @@ class _DestinoScreenState extends ConsumerState<DestinoScreen> {
   }
 
   Widget _infoCard(String titulo, Map<String, dynamic> data) {
-    // ✅ CORREGIDO: las claves tienen mayúscula — Codigo_Almacen y Stand
     final almacen = data['Codigo_Almacen'] ?? data['almacen'] ?? '-';
     final stand   = data['Stand']          ?? data['stand']   ?? '-';
     final nombre  = data['Nombre_UsuarioT']                   ?? '';
@@ -54,46 +58,35 @@ class _DestinoScreenState extends ConsumerState<DestinoScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            titulo,
-            style: const TextStyle(
-              color: Color(0xFF42A5F5),
-              fontWeight: FontWeight.bold,
-            ),
-          ),
+          Text(titulo,
+              style: const TextStyle(
+                  color: Color(0xFF42A5F5), fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           if (nombre.isNotEmpty)
-            Text(
-              '👤 $nombre',
+            Text('👤 $nombre',
+                style: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.w600)),
+          Text('🏪 Almacén: $almacen',
               style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          Text(
-            '🏪 Almacén: $almacen',
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          Text(
-            '📍 Stand: $stand',
-            style: const TextStyle(color: Color(0xFFB0BEC5)),
-          ),
+                  color: Colors.white, fontWeight: FontWeight.w600)),
+          Text('📍 Stand: $stand',
+              style: const TextStyle(color: Color(0xFFB0BEC5))),
         ],
       ),
     );
   }
 
   Future<void> _validar() async {
-    final claveLimpia = _limpiarCodigo(_clave.text);
+    // 🛡️ Si ya hay una validación en curso, ignorar el segundo scan
+    if (_validando) return;
 
+    final claveLimpia = _limpiarCodigo(_clave.text);
     if (claveLimpia.isEmpty) {
       alertaError(context, 'Escanea la clave del usuario destino');
       return;
     }
 
+    _validando = true; // bloquear
     ref.read(kioskProvider).registerActivity();
     setState(() => _loading = true);
 
@@ -105,7 +98,6 @@ class _DestinoScreenState extends ConsumerState<DestinoScreen> {
         final data   = res['data'] as Map<String, dynamic>;
         final origen = ref.read(traspasoProvider).origen;
 
-        // ✅ CORREGIDO: comparar con 'Stand' (mayúscula)
         if (origen != null &&
             data['Stand']?.toString() == origen['Stand']?.toString()) {
           alertaError(
@@ -118,7 +110,6 @@ class _DestinoScreenState extends ConsumerState<DestinoScreen> {
 
         ref.read(traspasoProvider.notifier).setDestino(data);
       } else {
-        // ✅ CORREGIDO: era res['mensaje'], debe ser res['message']
         alertaError(context, res['message'] ?? 'Error desconocido');
       }
     } catch (e) {
@@ -127,6 +118,10 @@ class _DestinoScreenState extends ConsumerState<DestinoScreen> {
       debugPrint('Error validación destino: $e');
     } finally {
       if (mounted) setState(() => _loading = false);
+      // Liberar el debounce después de 1 segundo —
+      // tiempo suficiente para que el scanner no vuelva a disparar
+      await Future.delayed(const Duration(seconds: 1));
+      _validando = false;
     }
   }
 
@@ -143,7 +138,7 @@ class _DestinoScreenState extends ConsumerState<DestinoScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final prov        = ref.watch(traspasoProvider);
+    final prov         = ref.watch(traspasoProvider);
     final destinoListo = prov.destino != null;
 
     return Scaffold(
@@ -198,10 +193,8 @@ class _DestinoScreenState extends ConsumerState<DestinoScreen> {
                     child: OutlinedButton.icon(
                       icon: const Icon(Icons.cancel_outlined,
                           color: Colors.redAccent),
-                      label: const Text(
-                        'Cancelar',
-                        style: TextStyle(color: Colors.redAccent),
-                      ),
+                      label: const Text('Cancelar',
+                          style: TextStyle(color: Colors.redAccent)),
                       onPressed: _cancelar,
                     ),
                   ),
@@ -209,17 +202,14 @@ class _DestinoScreenState extends ConsumerState<DestinoScreen> {
                   Expanded(
                     child: ElevatedButton.icon(
                       icon: const Icon(Icons.arrow_forward_rounded),
-                      label: FittedBox(
-                        child: const Text('Continuar'),
-                      ),
+                      label: const FittedBox(child: Text('Continuar')),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF1565C0),
                       ),
                       onPressed: () => Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => const LineasScreen(),
-                        ),
+                            builder: (_) => const LineasScreen()),
                       ),
                     ),
                   ),

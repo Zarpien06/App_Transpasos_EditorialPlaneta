@@ -9,8 +9,10 @@
 //       • WiFi conectado CON internet → verde "Online"
 //   📛 Nombre del dispositivo (device_id) leído desde DeviceService
 //
-// Solo se renderiza cuando KioskService.isKioskActive == true.
-// Se inserta en la parte superior del KioskWrapper.
+// ✅ FIX: Ya NO depende de isKioskActive para renderizarse.
+//    La barra se muestra siempre. Esto resuelve el problema de arranque
+//    desde reinicio/apagado donde isKioskActive llega false mientras
+//    SharedPreferences aún no terminó de cargar.
 
 import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -19,8 +21,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/battery_service.dart';
 import '../core/connectivity_service.dart';
-import '../core/device_service.dart'; // 👈 NUEVO: para leer el device_id
-import '../main.dart'; // kioskProvider
+import '../core/device_service.dart';
 
 class KioskStatusBar extends ConsumerStatefulWidget {
   const KioskStatusBar({super.key});
@@ -32,19 +33,14 @@ class KioskStatusBar extends ConsumerStatefulWidget {
 class _KioskStatusBarState extends ConsumerState<KioskStatusBar> {
 
   // ─── Estado batería ────────────────────────────────────────────────────────
-  int  _batteryLevel  = BatteryService().level;
-  bool _isCharging    = BatteryService().isCharging;
+  int  _batteryLevel = BatteryService().level;
+  bool _isCharging   = BatteryService().isCharging;
 
   // ─── Estado conexión ───────────────────────────────────────────────────────
-  // Necesitamos 2 flags para diferenciar "WiFi sin internet":
-  //   _hasInterface  → hay interfaz de red activa (WiFi/mobile/ethernet)
-  //   _hasInternet   → hay salida real a internet (ConnectivityService.isOnline)
-  bool _hasInterface  = false;
-  bool _hasInternet   = ConnectivityService().isOnline;
+  bool _hasInterface = false;
+  bool _hasInternet  = ConnectivityService().isOnline;
 
   // ─── Estado dispositivo ────────────────────────────────────────────────────
-  // Se carga una sola vez en initState desde DeviceService (singleton cacheado).
-  // Muestra el device_id configurado al inicializar la app (ej: "DV05").
   String _deviceId = '';
 
   // ─── Subscriptions ─────────────────────────────────────────────────────────
@@ -53,52 +49,43 @@ class _KioskStatusBarState extends ConsumerState<KioskStatusBar> {
   StreamSubscription? _onlineSub;
   StreamSubscription? _connectivitySub;
 
-  // ─── Connectivity nativo para saber si hay interfaz aunque no haya internet ─
   final Connectivity _connectivity = Connectivity();
 
   @override
   void initState() {
     super.initState();
 
-    // Batería — nivel
     _levelSub = BatteryService().levelStream.listen((level) {
       if (mounted) setState(() => _batteryLevel = level);
     });
 
-    // Batería — carga
     _chargingSub = BatteryService().isChargingStream.listen((charging) {
       if (mounted) setState(() => _isCharging = charging);
     });
 
-    // Internet real (stream existente del ConnectivityService)
     _onlineSub = ConnectivityService().onlineStream.listen((online) {
       if (mounted) setState(() => _hasInternet = online);
     });
 
-    // Interfaz de red (WiFi conectado o no, independiente de internet)
     _connectivitySub = _connectivity.onConnectivityChanged.listen((results) {
-      final hasIf = results.contains(ConnectivityResult.wifi)     ||
-                    results.contains(ConnectivityResult.mobile)   ||
+      final hasIf = results.contains(ConnectivityResult.wifi)   ||
+                    results.contains(ConnectivityResult.mobile) ||
                     results.contains(ConnectivityResult.ethernet);
       if (mounted) setState(() => _hasInterface = hasIf);
     });
 
-    // Leer estado inicial de interfaz
     _initInterface();
-
-    // 👈 NUEVO: Leer el device_id guardado en la base de datos
     _loadDeviceId();
   }
 
   Future<void> _initInterface() async {
     final results = await _connectivity.checkConnectivity();
-    final hasIf = results.contains(ConnectivityResult.wifi)     ||
-                  results.contains(ConnectivityResult.mobile)   ||
+    final hasIf = results.contains(ConnectivityResult.wifi)   ||
+                  results.contains(ConnectivityResult.mobile) ||
                   results.contains(ConnectivityResult.ethernet);
     if (mounted) setState(() => _hasInterface = hasIf);
   }
 
-  // 👈 NUEVO: Carga el device_id desde DeviceService (singleton, valor cacheado)
   Future<void> _loadDeviceId() async {
     final id = await DeviceService().getDeviceId();
     if (mounted) setState(() => _deviceId = id);
@@ -113,23 +100,15 @@ class _KioskStatusBarState extends ConsumerState<KioskStatusBar> {
     super.dispose();
   }
 
-  // ─── Lógica de estado de conexión ──────────────────────────────────────────
-
-  /// Caso 1: Sin red            → _hasInterface == false
-  /// Caso 2: WiFi sin internet  → _hasInterface == true && _hasInternet == false
-  /// Caso 3: Online             → _hasInterface == true && _hasInternet == true
   _ConnectionState get _connectionState {
     if (!_hasInterface) return _ConnectionState.noNetwork;
     if (!_hasInternet)  return _ConnectionState.wifiNoInternet;
     return _ConnectionState.online;
   }
 
-  // ─── BUILD ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    final kiosk = ref.watch(kioskProvider);
-    if (!kiosk.isKioskActive) return const SizedBox.shrink();
-
+    // ✅ Sin condición isKioskActive — la barra se muestra siempre
     return Container(
       width: double.infinity,
       height: 42,
@@ -142,25 +121,15 @@ class _KioskStatusBarState extends ConsumerState<KioskStatusBar> {
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(
         children: [
-          // ── Icono kiosco ──────────────────────────────────────────────────
-          const Icon(Icons.lock_outline_rounded, color: Color(0xFF4F8CFF), size: 14),
+          // ── Icono kiosco ─────────────────────────────────────────────────
+          const Icon(Icons.lock_outline_rounded,
+              color: Color(0xFF4F8CFF), size: 14),
           const SizedBox(width: 6),
-          const Text(
-            '',
-            style: TextStyle(
-              color: Color(0xFF4F8CFF),
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 1.2,
-            ),
-          ),
 
-          // ── Separador ─────────────────────────────────────────────────────
+          // ── Separador ────────────────────────────────────────────────────
           const _Divider(),
 
-          // ── Nombre del dispositivo 👈 NUEVO ───────────────────────────────
-          // Muestra el device_id (ej: "DV05") configurado al inicializar la app.
-          // Solo se renderiza si ya fue cargado (no vacío).
+          // ── Nombre del dispositivo ───────────────────────────────────────
           if (_deviceId.isNotEmpty) ...[
             Text(
               _deviceId,
@@ -174,12 +143,12 @@ class _KioskStatusBarState extends ConsumerState<KioskStatusBar> {
             const _Divider(),
           ],
 
-          // ── Indicador de conexión ─────────────────────────────────────────
+          // ── Indicador de conexión ────────────────────────────────────────
           _ConnectionIndicator(state: _connectionState),
 
           const Spacer(),
 
-          // ── Batería ───────────────────────────────────────────────────────
+          // ── Batería ──────────────────────────────────────────────────────
           _BatteryIndicator(level: _batteryLevel, isCharging: _isCharging),
         ],
       ),
@@ -200,7 +169,6 @@ class _ConnectionIndicator extends StatelessWidget {
   Widget build(BuildContext context) {
     switch (state) {
 
-      // ── Sin red ────────────────────────────────────────────────────────────
       case _ConnectionState.noNetwork:
         return const Row(
           mainAxisSize: MainAxisSize.min,
@@ -218,7 +186,6 @@ class _ConnectionIndicator extends StatelessWidget {
           ],
         );
 
-      // ── WiFi sin internet ──────────────────────────────────────────────────
       case _ConnectionState.wifiNoInternet:
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -248,7 +215,6 @@ class _ConnectionIndicator extends StatelessWidget {
           ),
         );
 
-      // ── Online ─────────────────────────────────────────────────────────────
       case _ConnectionState.online:
         return const Row(
           mainAxisSize: MainAxisSize.min,
@@ -278,7 +244,6 @@ class _BatteryIndicator extends StatelessWidget {
 
   const _BatteryIndicator({required this.level, required this.isCharging});
 
-  // Color según nivel
   Color get _color {
     if (isCharging)  return const Color(0xFF22C55E);
     if (level <= 15) return const Color(0xFFEF4444);
@@ -286,15 +251,14 @@ class _BatteryIndicator extends StatelessWidget {
     return const Color(0xFF22C55E);
   }
 
-  // Icono según nivel y estado de carga
   IconData get _icon {
-    if (isCharging)   return Icons.battery_charging_full_rounded;
-    if (level <= 10)  return Icons.battery_0_bar_rounded;
-    if (level <= 25)  return Icons.battery_1_bar_rounded;
-    if (level <= 40)  return Icons.battery_2_bar_rounded;
-    if (level <= 55)  return Icons.battery_3_bar_rounded;
-    if (level <= 70)  return Icons.battery_4_bar_rounded;
-    if (level <= 85)  return Icons.battery_5_bar_rounded;
+    if (isCharging)  return Icons.battery_charging_full_rounded;
+    if (level <= 10) return Icons.battery_0_bar_rounded;
+    if (level <= 25) return Icons.battery_1_bar_rounded;
+    if (level <= 40) return Icons.battery_2_bar_rounded;
+    if (level <= 55) return Icons.battery_3_bar_rounded;
+    if (level <= 70) return Icons.battery_4_bar_rounded;
+    if (level <= 85) return Icons.battery_5_bar_rounded;
     return Icons.battery_full_rounded;
   }
 
@@ -305,7 +269,6 @@ class _BatteryIndicator extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Parpadeo suave cuando está baja y no cargando
         if (isLow)
           _PulsingIcon(icon: _icon, color: _color)
         else
@@ -321,10 +284,7 @@ class _BatteryIndicator extends StatelessWidget {
         ),
         if (isCharging) ...[
           const SizedBox(width: 3),
-          const Text(
-            '⚡',
-            style: TextStyle(fontSize: 10),
-          ),
+          const Text('⚡', style: TextStyle(fontSize: 10)),
         ],
       ],
     );

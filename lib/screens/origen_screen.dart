@@ -1,5 +1,7 @@
 ﻿// lib/screens/origen_screen.dart
-// ─────────────────────────────────────────────────────────────────────────────
+//
+// CAMBIO: se agregó _validando como debounce en _validar(), mismo patrón
+// que destino_screen.dart — previene doble disparo del scanner.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -20,7 +22,8 @@ class OrigenScreen extends ConsumerStatefulWidget {
 
 class _OrigenScreenState extends ConsumerState<OrigenScreen> {
   final _clave = TextEditingController();
-  bool _loading = false;
+  bool _loading   = false;
+  bool _validando = false; // 🛡️ debounce: bloquea doble scan
 
   @override
   void dispose() {
@@ -28,7 +31,6 @@ class _OrigenScreenState extends ConsumerState<OrigenScreen> {
     super.dispose();
   }
 
-  // 🔹 LIMPIEZA DE CÓDIGO
   String _limpiarCodigo(String code) {
     return code
         .replaceAll(']C1', '')
@@ -37,17 +39,18 @@ class _OrigenScreenState extends ConsumerState<OrigenScreen> {
         .trim();
   }
 
-  // 🔹 VALIDACIÓN
   Future<void> _validar() async {
-    final claveLimpia = _limpiarCodigo(_clave.text);
+    // 🛡️ Si ya hay una validación en curso, ignorar el segundo scan
+    if (_validando) return;
 
+    final claveLimpia = _limpiarCodigo(_clave.text);
     if (claveLimpia.isEmpty) {
       alertaError(context, 'Ingresa la clave secreta');
       return;
     }
 
+    _validando = true; // bloquear
     ref.read(kioskProvider).registerActivity();
-
     setState(() => _loading = true);
 
     try {
@@ -56,7 +59,6 @@ class _OrigenScreenState extends ConsumerState<OrigenScreen> {
 
       if (res['status'] == 'ok') {
         ref.read(traspasoProvider.notifier).setOrigen(res['data']);
-
         if (mounted) {
           Navigator.push(
             context,
@@ -64,7 +66,6 @@ class _OrigenScreenState extends ConsumerState<OrigenScreen> {
           );
         }
       } else {
-        // ✅ CORREGIDO: era res['mensaje'], la API devuelve 'message'
         alertaError(context, res['message'] ?? 'Error desconocido');
       }
     } catch (e) {
@@ -73,6 +74,9 @@ class _OrigenScreenState extends ConsumerState<OrigenScreen> {
       debugPrint('Error validación: $e');
     } finally {
       if (mounted) setState(() => _loading = false);
+      // Liberar el debounce después de 1 segundo
+      await Future.delayed(const Duration(seconds: 1));
+      _validando = false;
     }
   }
 
@@ -89,7 +93,6 @@ class _OrigenScreenState extends ConsumerState<OrigenScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const SizedBox(height: 20),
-
             Center(
               child: Image.asset(
                 'assets/img/planeta-icon-v2.png',
@@ -97,35 +100,27 @@ class _OrigenScreenState extends ConsumerState<OrigenScreen> {
                 filterQuality: FilterQuality.low,
               ),
             ),
-
             const SizedBox(height: 10),
-
             const Text(
               'Ingrese la clave del usuario origen',
               style: TextStyle(color: Color(0xFF90CAF9), fontSize: 16),
               textAlign: TextAlign.center,
             ),
-
             const SizedBox(height: 30),
-
             CampoCodigo(
               controller: _clave,
               label: 'Clave Secreta (código de barras)',
               ocultable: true,
             ),
-
             const SizedBox(height: 30),
-
             SizedBox(
               height: 55,
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : ElevatedButton.icon(
                       icon: const Icon(Icons.send_rounded),
-                      label: const Text(
-                        'ENVIAR',
-                        style: TextStyle(fontSize: 16),
-                      ),
+                      label: const Text('ENVIAR',
+                          style: TextStyle(fontSize: 16)),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF42A5F5),
                         foregroundColor: Colors.white,
@@ -137,15 +132,11 @@ class _OrigenScreenState extends ConsumerState<OrigenScreen> {
                       onPressed: _validar,
                     ),
             ),
-
             const SizedBox(height: 16),
-
             TextButton.icon(
               icon: const Icon(Icons.cancel_outlined, color: Colors.white38),
-              label: const Text(
-                'Cancelar',
-                style: TextStyle(color: Colors.white38),
-              ),
+              label: const Text('Cancelar',
+                  style: TextStyle(color: Colors.white38)),
               onPressed: () {
                 ref.read(traspasoProvider.notifier).limpiar();
                 Navigator.pop(context);

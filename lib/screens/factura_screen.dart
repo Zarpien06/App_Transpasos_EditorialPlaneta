@@ -319,8 +319,10 @@ class _FacturaScreenState extends ConsumerState<FacturaScreen> {
                     child: OutlinedButton(
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(horizontal: 6),
+                        backgroundColor: const Color(0xFF424242),
+                        foregroundColor: Colors.white,
                         side: const BorderSide(
-                            color: Color.fromARGB(255, 201, 202, 203), width: 1.5),
+                            color: Color(0xFF616161), width: 1.5),
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12)),
                       ),
@@ -352,9 +354,9 @@ class _FacturaScreenState extends ConsumerState<FacturaScreen> {
                     ),
                   ),
                 ),
-            
+
                 const SizedBox(width: 8),
-            
+
                 // SÍ SALIÓ — NUEVO TRASPASO
                 Flexible(
                   child: SizedBox(
@@ -412,299 +414,297 @@ class _FacturaScreenState extends ConsumerState<FacturaScreen> {
     final destinoAlmacen = ts.destino?['Codigo_Almacen']?.toString() ?? '—';
     final destinoStand   = ts.destino?['Stand']?.toString()          ?? '—';
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF5F6FA),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new,
-              color: Colors.black54, size: 18),
-          onPressed: () => Navigator.pop(context),
+    // ── CAMBIO 1: PopScope bloquea el botón físico/gesto atrás ───────────────
+    return PopScope(
+      canPop: false,   // ← NUNCA se puede hacer pop desde esta pantalla
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF5F6FA),
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          elevation: 0,
+          // ── CAMBIO 2: Sin leading → no hay flecha de retroceso ─────────────
+          automaticallyImplyLeading: false,
+          title: const Text(
+            'Vista previa del ticket',
+            style: TextStyle(
+                color: Colors.black87,
+                fontSize: 15,
+                fontWeight: FontWeight.w600),
+          ),
         ),
-        title: const Text(
-          'Vista previa del ticket',
-          style: TextStyle(
-              color: Colors.black87,
-              fontSize: 15,
-              fontWeight: FontWeight.w600),
-        ),
-      ),
-      body: _loadingAssets
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                Expanded(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(16),
-                    child: Center(
-                      child: Container(
-                        width: 300,
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(4),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.12),
-                              blurRadius: 16,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                        child: Column(
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
-                              child: Row(
-                                children: [
-                                  Image.asset(
-                                    'assets/img/icon-planeta-removebg-preview.png',
-                                    width: 36,
-                                    height: 36,
-                                    errorBuilder: (_, __, ___) =>
-                                        const Icon(Icons.book, size: 36),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  const Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text('EDITORIAL PLANETA',
-                                          style: TextStyle(
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.bold,
-                                              letterSpacing: 0.5)),
-                                      Text('COLOMBIANA S.A.',
-                                          style: TextStyle(
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.bold,
-                                              letterSpacing: 0.5)),
-                                    ],
-                                  ),
-                                ],
+        body: _loadingAssets
+            ? const Center(child: CircularProgressIndicator())
+            : Column(
+                children: [
+                  Expanded(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(16),
+                      child: Center(
+                        child: Container(
+                          width: 300,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(4),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.12),
+                                blurRadius: 16,
+                                offset: const Offset(0, 4),
                               ),
-                            ),
-                            const _TicketDivider(),
-                            Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 16),
-                              child: Column(
-                                children: [
-                                  Text(
-                                    'Dispositivo $_numDispositivo  |  Mov. #${ts.numeroMovimiento ?? '-'}',
-                                    style: const TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.bold),
-                                    textAlign: TextAlign.center,
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    'Fecha: $_fecha   Hora: $_hora',
-                                    style: TextStyle(
-                                        fontSize: 11,
-                                        color: Colors.grey[600]),
-                                    textAlign: TextAlign.center,
-                                  ),
-                                ],
+                            ],
+                          ),
+                          child: Column(
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
+                                child: Row(
+                                  children: [
+                                    Image.asset(
+                                      'assets/img/icon-planeta-removebg-preview.png',
+                                      width: 36,
+                                      height: 36,
+                                      errorBuilder: (_, __, ___) =>
+                                          const Icon(Icons.book, size: 36),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    const Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text('EDITORIAL PLANETA',
+                                            style: TextStyle(
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.bold,
+                                                letterSpacing: 0.5)),
+                                        Text('COLOMBIANA S.A.',
+                                            style: TextStyle(
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.bold,
+                                                letterSpacing: 0.5)),
+                                      ],
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ),
-                            const _TicketDivider(),
-                            const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 4),
-                              child: Text('TRASPASOS',
-                                  style: TextStyle(
-                                      fontSize: 17,
-                                      fontWeight: FontWeight.bold,
-                                      letterSpacing: 3),
-                                  textAlign: TextAlign.center),
-                            ),
-                            const _TicketDivider(),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 16, vertical: 4),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Desde: $origenAlmacen   Stand: $origenStand',
-                                    style: const TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w600),
-                                  ),
-                                  const SizedBox(height: 3),
-                                  Text(
-                                    'Hasta: $destinoAlmacen   Stand: $destinoStand',
-                                    style: const TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w600),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const _TicketDivider(),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 16, vertical: 4),
-                              child: Row(
-                                children: const [
-                                  SizedBox(
-                                    width: 105,
-                                    child: Text('Ref',
-                                        style: TextStyle(
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.bold)),
-                                  ),
-                                  Expanded(
-                                    child: Text('Descripción',
-                                        style: TextStyle(
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.bold)),
-                                  ),
-                                  Text('Cant',
+                              const _TicketDivider(),
+                              Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 16),
+                                child: Column(
+                                  children: [
+                                    Text(
+                                      'Dispositivo $_numDispositivo  |  Mov. #${ts.numeroMovimiento ?? '-'}',
+                                      style: const TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.bold),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      'Fecha: $_fecha   Hora: $_hora',
                                       style: TextStyle(
                                           fontSize: 11,
-                                          fontWeight: FontWeight.bold)),
-                                ],
+                                          color: Colors.grey[600]),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ),
-                            const _TicketDivider(),
-                            ...ts.items.map(
-                              (item) => Padding(
+                              const _TicketDivider(),
+                              const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 4),
+                                child: Text('TRASPASOS',
+                                    style: TextStyle(
+                                        fontSize: 17,
+                                        fontWeight: FontWeight.bold,
+                                        letterSpacing: 3),
+                                    textAlign: TextAlign.center),
+                              ),
+                              const _TicketDivider(),
+                              Padding(
                                 padding: const EdgeInsets.symmetric(
-                                    horizontal: 16, vertical: 6),
-                                child: Row(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.start,
+                                    horizontal: 16, vertical: 4),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
+                                    Text(
+                                      'Desde: $origenAlmacen   Stand: $origenStand',
+                                      style: const TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      'Hasta: $destinoAlmacen   Stand: $destinoStand',
+                                      style: const TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const _TicketDivider(),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 16, vertical: 4),
+                                child: Row(
+                                  children: const [
                                     SizedBox(
                                       width: 105,
-                                      child: Text(
-                                          item['codigo']?.toString() ?? '',
-                                          style:
-                                              const TextStyle(fontSize: 10)),
+                                      child: Text('Ref',
+                                          style: TextStyle(
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.bold)),
                                     ),
                                     Expanded(
-                                      child: Text(
-                                          item['descripcion']?.toString() ??
-                                              '',
-                                          style:
-                                              const TextStyle(fontSize: 10)),
+                                      child: Text('Descripción',
+                                          style: TextStyle(
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.bold)),
                                     ),
-                                    Text('${item['cantidad']}',
-                                        style: const TextStyle(
+                                    Text('Cant',
+                                        style: TextStyle(
                                             fontSize: 11,
                                             fontWeight: FontWeight.bold)),
                                   ],
                                 ),
                               ),
-                            ),
-                            const _TicketDivider(),
-                            Padding(
-                              padding:
-                                  const EdgeInsets.fromLTRB(16, 6, 16, 20),
-                              child: Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text('Referencias: ${ts.items.length}',
-                                      style: const TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.bold)),
-                                  Text('Total: ${ts.total}',
-                                      style: const TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.bold)),
-                                ],
+                              const _TicketDivider(),
+                              ...ts.items.map(
+                                (item) => Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 16, vertical: 6),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      SizedBox(
+                                        width: 105,
+                                        child: Text(
+                                            item['codigo']?.toString() ?? '',
+                                            style:
+                                                const TextStyle(fontSize: 10)),
+                                      ),
+                                      Expanded(
+                                        child: Text(
+                                            item['descripcion']?.toString() ??
+                                                '',
+                                            style:
+                                                const TextStyle(fontSize: 10)),
+                                      ),
+                                      Text('${item['cantidad']}',
+                                          style: const TextStyle(
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.bold)),
+                                    ],
+                                  ),
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-
-                // ── BOTONES INFERIORES ─────────────────────────────────────────
-                Container(
-                  color: Colors.white,
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-
-                      // ── BANNER "no salió papel" visible tras imprimir ──────
-                      // Solo se muestra en el fondo; el dialog ya tiene los botones de acción
-                      if (_yaImprimio)
-                        Container(
-                          width: double.infinity,
-                          margin: const EdgeInsets.only(bottom: 10),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 10),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFFF3CD),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(
-                                color: const Color(0xFFFFCC02), width: 1.2),
-                          ),
-                          child: const Row(
-                            children: [
-                              Icon(Icons.warning_amber_rounded,
-                                  color: Color(0xFFF9A825), size: 20),
-                              SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  '¿No salió el ticket?',
-                                  style: TextStyle(
-                                      fontSize: 12,
-                                      color: Color(0xFF7B6000),
-                                      fontWeight: FontWeight.w500),
+                              const _TicketDivider(),
+                              Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(16, 6, 16, 20),
+                                child: Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text('Referencias: ${ts.items.length}',
+                                        style: const TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.bold)),
+                                    Text('Total: ${ts.total}',
+                                        style: const TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.bold)),
+                                  ],
                                 ),
                               ),
                             ],
                           ),
                         ),
-
-                      // ── BOTÓN IMPRIMIR PRINCIPAL ───────────────────────────
-                      // El botón "REIMPRIMIR" independiente fue eliminado:
-                      // la alerta de éxito ya ofrece reimprimir desde el dialog.
-                      SizedBox(
-                        width: double.infinity,
-                        height: 52,
-                        child: ElevatedButton.icon(
-                          icon: _imprimiendo
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                      color: Colors.white, strokeWidth: 2),
-                                )
-                              : const Icon(Icons.print_rounded),
-                          label: Text(
-                            _imprimiendo
-                                ? 'IMPRIMIENDO...'
-                                : _yaImprimio
-                                    ? 'IMPRIMIR DE NUEVO'
-                                    : 'IMPRIMIR TICKET',
-                            style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: 1),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF1A2035),
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14)),
-                            elevation: 0,
-                          ),
-                          onPressed: _imprimiendo ? null : _imprimir,
-                        ),
                       ),
-                    ],
+                    ),
                   ),
-                ),
-              ],
-            ),
+
+                  // ── BOTONES INFERIORES ─────────────────────────────────────────
+                  Container(
+                    color: Colors.white,
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+
+                        // ── BANNER "no salió papel" visible tras imprimir ──────
+                        if (_yaImprimio)
+                          Container(
+                            width: double.infinity,
+                            margin: const EdgeInsets.only(bottom: 10),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFF3CD),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                  color: const Color(0xFFFFCC02), width: 1.2),
+                            ),
+                            child: const Row(
+                              children: [
+                                Icon(Icons.warning_amber_rounded,
+                                    color: Color(0xFFF9A825), size: 20),
+                                SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    '¿No salió el ticket?',
+                                    style: TextStyle(
+                                        fontSize: 12,
+                                        color: Color(0xFF7B6000),
+                                        fontWeight: FontWeight.w500),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+
+                        // ── BOTÓN IMPRIMIR PRINCIPAL ───────────────────────────
+                        SizedBox(
+                          width: double.infinity,
+                          height: 52,
+                          child: ElevatedButton.icon(
+                            icon: _imprimiendo
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                        color: Colors.white, strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.print_rounded),
+                            label: Text(
+                              _imprimiendo
+                                  ? 'IMPRIMIENDO...'
+                                  : _yaImprimio
+                                      ? 'IMPRIMIR DE NUEVO'
+                                      : 'IMPRIMIR TICKET',
+                              style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 1),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF1A2035),
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14)),
+                              elevation: 0,
+                            ),
+                            onPressed: _imprimiendo ? null : _imprimir,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+      ),
     );
   }
 }

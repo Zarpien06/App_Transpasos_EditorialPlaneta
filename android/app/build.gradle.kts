@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.traspasos_planeta"
+    namespace = "com.planeta.traspasos"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -19,7 +19,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.traspasos_planeta"
+        applicationId = "com.sr.traspasos"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

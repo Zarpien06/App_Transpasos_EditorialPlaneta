@@ -82,9 +82,11 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
     if (!mounted) return;
 
     if (resp['status'] == 'ok') {
-      // ✅ Guardar en local con la contraseña en TEXTO PLANO
-      // para que el login offline pueda comparar directamente
-      await DatabaseService().guardarAdminLocal(nick, pwd);
+      // FIX: Se eliminó la llamada duplicada a guardarAdminLocal().
+      // ApiService.adminLogin() ya la hace internamente con la contraseña
+      // en texto plano. Llamarla aquí por segunda vez causaba el warning
+      // "database has been locked" porque ambas escrituras competían con
+      // la transacción masiva de guardarProductos() del arranque.
 
       Map<String, dynamic> adminData = {'usuario': nick, 'tipo': 'admin'};
       final rawData = resp['admin'] ?? resp['data'];
@@ -122,7 +124,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen>
         limit: 1,
       );
       if (rows.isNotEmpty) {
-        final pwdGuardada = rows.first['password']?.toString() ?? '';
+        final pwdGuardada    = rows.first['password']?.toString() ?? '';
         final pwdDecodificada = _decodificarPwd(pwdGuardada);
         valido = pwdDecodificada == pwd;
       }

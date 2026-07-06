@@ -5,11 +5,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../providers/traspaso_provider.dart';
 import '../services/api_service.dart';
+import '../services/sync_service.dart';             // ← AÑADIDO
 import '../widgets/campo_codigo.dart';
 import '../widgets/alerts.dart';
 import 'factura_screen.dart';
 import '../core/constants.dart';
 import '../core/device_service.dart';
+import '../core/time_validation_service.dart';
+import '../widgets/time_validation_dialog.dart';
 import '../main.dart';
 
 class LineasScreen extends ConsumerStatefulWidget {
@@ -22,7 +25,9 @@ class LineasScreen extends ConsumerStatefulWidget {
 class _LineasScreenState extends ConsumerState<LineasScreen> {
   final _codigo = TextEditingController();
   final _foco   = FocusNode();
-  bool _loading = false;
+  bool _loading     = false;
+  bool _escaneando  = false;
+  bool _confirmando = false;
   String? _ultimoAgregado;
 
   @override
@@ -56,6 +61,8 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
   // ESCANEAR
   // ─────────────────────────────────────────────────────────────────────────
   Future<void> _escanear(String raw) async {
+    if (_escaneando || _loading) return;
+
     final codigo = _limpiarCodigo(raw);
     if (codigo.isEmpty) return;
 
@@ -73,7 +80,8 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
     }
 
     setState(() {
-      _loading = true;
+      _escaneando     = true;
+      _loading        = true;
       _ultimoAgregado = null;
     });
 
@@ -84,7 +92,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
       if (res['status'] == 'ok') {
         final producto = res['producto'];
         if (producto == null) {
-          _mostrarDialogoNoEncontrado(codigo);
+          await _manejarNoEncontrado(codigo);
           return;
         }
 
@@ -96,9 +104,15 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
         } else {
           _mostrarDialogoCantidad(libro, esNuevo: false);
         }
+
       } else if (res['status'] == 'not_found') {
-        _mostrarDialogoNoEncontrado(codigo);
+        // ── CAMBIO: antes de mostrar el diálogo, verificar si el catálogo
+        //    cambió en el servidor. Si descargó → reintenta el escaneo.
+        //    Si no cambió → el libro realmente no existe → diálogo normal.
+        await _manejarNoEncontrado(codigo);
+
       } else {
+        // Error de red u otro error: mostramos el diálogo directamente.
         _mostrarDialogoNoEncontrado(codigo);
       }
     } catch (e) {
@@ -106,7 +120,49 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
       alertaError(context, 'Error de conexión');
       debugPrint('Error escanear: $e');
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading    = false;
+          _escaneando = false;
+        });
+      }
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // MANEJAR NO ENCONTRADO
+  //
+  // Flujo:
+  //   1. Consulta hash (80 bytes) — si sin internet, devuelve false rápido.
+  //   2. Hash igual → libro realmente no existe → muestra diálogo.
+  //   3. Hash distinto → descargó catálogo actualizado → reintenta escaneo.
+  //      El operario solo ve el spinner un par de segundos más; nada cambia
+  //      visualmente desde su perspectiva.
+  // ─────────────────────────────────────────────────────────────────────────
+  Future<void> _manejarNoEncontrado(String codigo) async {
+    final descargo = await SyncService.verificarYDescargarSiCambio();
+
+    if (!mounted) return;
+
+    if (descargo) {
+      // El catálogo se actualizó: reintentar el escaneo de forma transparente.
+      debugPrint(
+        '🔄 Catálogo actualizado tras not_found — reintentando escaneo: $codigo',
+      );
+
+      // Reseteamos los guards para que _escanear() pueda ejecutarse.
+      setState(() {
+        _loading    = false;
+        _escaneando = false;
+      });
+
+      // Pequeña pausa para que la BD local termine de escribir.
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+
+      if (mounted) await _escanear(codigo);
+    } else {
+      // Hash igual o sin internet: el libro no existe → diálogo normal.
+      _mostrarDialogoNoEncontrado(codigo);
     }
   }
 
@@ -419,6 +475,8 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
   // CONFIRMAR TRASPASO
   // ─────────────────────────────────────────────────────────────────────────
   Future<void> _confirmarTraspaso() async {
+    if (_confirmando) return;
+
     final notifier = _notifier;
 
     if (notifier.items.isEmpty) {
@@ -428,7 +486,26 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
 
     _registrarActividad();
 
+    // ── Verificar hora antes de permitir confirmar ────────────────────────
+    final horaResult = ref.read(horaValidacionProvider);
+    if (horaResult != null && horaResult.esCritico) {
+      final revalidado = await TimeValidationService().validar();
+      if (!mounted) return;
+      ref.read(horaValidacionProvider.notifier).state = revalidado;
+
+      if (revalidado.esCritico) {
+        final puedeAvanzar =
+            await TimeValidationDialog.mostrar(context, revalidado);
+        if (!mounted || puedeAvanzar != true) return;
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────
+
     alertaConfirmar(context, '¿Confirmar el traspaso?', () async {
+      if (_confirmando) return;
+
+      setState(() => _confirmando = true);
+
       try {
         final res = await ApiService.registrarTraspaso({
           'origen':  notifier.origen,
@@ -443,25 +520,32 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
                 res['numero_movimiento'].toString());
           }
 
+          notifier.confirmar();
+
           final deviceId = await DeviceService().getDeviceId();
           if (!mounted) return;
 
           alertaExito(
             context,
             '¡Traspaso hecho!',
-            onOk: () => Navigator.push(
-              context,
+            onOk: () => Navigator.of(context).pushAndRemoveUntil(
               MaterialPageRoute(
                 builder: (_) => FacturaScreen(deviceId: deviceId),
               ),
+              (_) => false,
             ),
           );
         } else {
-          alertaError(context, res['message'] ?? res['mensaje'] ?? 'Error al registrar');
+          alertaError(
+            context,
+            res['message'] ?? res['mensaje'] ?? 'Error al registrar',
+          );
         }
       } catch (_) {
         if (!mounted) return;
         alertaError(context, 'Error de conexión');
+      } finally {
+        if (mounted) setState(() => _confirmando = false);
       }
     });
   }
@@ -846,7 +930,7 @@ class _LineasScreenState extends ConsumerState<LineasScreen> {
                       borderRadius: BorderRadius.circular(14)),
                   elevation: 8,
                 ),
-                onPressed: _confirmarTraspaso,
+                onPressed: _confirmando ? null : _confirmarTraspaso,
               ),
             ),
           ],

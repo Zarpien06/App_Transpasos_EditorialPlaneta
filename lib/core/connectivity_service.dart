@@ -2,8 +2,10 @@
 
 import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
 import '../services/api_service.dart';
 import '../services/sync_service.dart';
+import 'trusted_clock_service.dart';
 
 class ConnectivityService {
   static final ConnectivityService _instance =
@@ -18,28 +20,33 @@ class ConnectivityService {
   final StreamController<bool> _hasInterfaceController =
       StreamController<bool>.broadcast();
 
-  Stream<bool> get onlineStream => _onlineController.stream;
+  Stream<bool> get onlineStream       => _onlineController.stream;
   Stream<bool> get hasInterfaceStream => _hasInterfaceController.stream;
 
-  bool _isOnline = false;
+  bool _isOnline     = false;
   bool _hasInterface = false;
 
-  bool get isOnline => _isOnline;
-  // true = hay WiFi/mobile/ethernet, aunque hayInternetReal() sea false
+  bool get isOnline     => _isOnline;
   bool get hasInterface => _hasInterface;
 
   StreamSubscription? _subscription;
-  Timer? _pollingTimer;
+  Timer?              _pollingTimer;
 
-  bool _syncing = false;
+  bool      _syncing         = false;
+  DateTime? _ultimaVerificacion; // cuándo se hizo el último hayInternetReal()
 
   static const _pollOfflineSeconds = 5;
   static const _pollOnlineSeconds  = 30;
 
+  // Si el último ping HTTP tiene menos de este tiempo, checkOnline() devuelve
+  // el estado cacheado en vez de hacer otro ping.
+  static const _maxEdadCacheSegundos = 20;
+
   Future<void> init() async {
     final results = await _connectivity.checkConnectivity();
     _hasInterface = _checkHasInterface(results);
-    _isOnline = _hasInterface ? await ApiService.hayInternetReal() : false;
+    _isOnline     = _hasInterface ? await ApiService.hayInternetReal() : false;
+    _ultimaVerificacion = DateTime.now();
 
     _onlineController.add(_isOnline);
     _hasInterfaceController.add(_hasInterface);
@@ -52,14 +59,11 @@ class ConnectivityService {
     _startPolling();
   }
 
-  // ─── Polling ─────────────────────────────────────────────────────────────
+  // ─── Polling ──────────────────────────────────────────────────────────────
 
   void _startPolling() {
     _pollingTimer?.cancel();
-
-    final interval =
-        _isOnline ? _pollOnlineSeconds : _pollOfflineSeconds;
-
+    final interval = _isOnline ? _pollOnlineSeconds : _pollOfflineSeconds;
     _pollingTimer = Timer(Duration(seconds: interval), () async {
       final results = await _connectivity.checkConnectivity();
       await _evaluar(results);
@@ -67,11 +71,15 @@ class ConnectivityService {
     });
   }
 
-  // ─── Evaluación central ──────────────────────────────────────────────────
+  // ─── Evaluación central ───────────────────────────────────────────────────
 
   Future<void> _evaluar(List<ConnectivityResult> results) async {
     final interfaceActiva = _checkHasInterface(results);
-    final online = interfaceActiva ? await ApiService.hayInternetReal() : false;
+    final online          = interfaceActiva
+        ? await ApiService.hayInternetReal()
+        : false;
+    _ultimaVerificacion = DateTime.now();
+
     final yaEstabaOnline = _isOnline;
 
     _updateInterface(interfaceActiva);
@@ -82,14 +90,22 @@ class ConnectivityService {
     }
   }
 
-  // ─── Sync ─────────────────────────────────────────────────────────────────
+  // ─── Sync al reconectarse ─────────────────────────────────────────────────
 
   Future<void> _sync() async {
     if (_syncing) return;
     _syncing = true;
     try {
+      // Re-validar hora al reconectarse
+      final resultadoReloj =
+          await TrustedClockService().sincronizarConServidor();
+      debugPrint(
+        '🕐 ConnectivityService: reloj tras reconexión → '
+        '${resultadoReloj.mensaje}',
+      );
+
+      // sincronizarCompleto ya incluye subirProductosPendientes() internamente
       await SyncService.sincronizarCompleto(soloSubida: true);
-      await SyncService.subirProductosPendientes();
     } catch (_) {}
     _syncing = false;
   }
@@ -97,8 +113,8 @@ class ConnectivityService {
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
   bool _checkHasInterface(List<ConnectivityResult> results) {
-    return results.contains(ConnectivityResult.wifi)     ||
-           results.contains(ConnectivityResult.mobile)   ||
+    return results.contains(ConnectivityResult.wifi)   ||
+           results.contains(ConnectivityResult.mobile) ||
            results.contains(ConnectivityResult.ethernet);
   }
 
@@ -117,10 +133,37 @@ class ConnectivityService {
     }
   }
 
+  /// Devuelve el estado de conexión real.
+  ///
+  /// Si el último ping HTTP tiene menos de [_maxEdadCacheSegundos], devuelve
+  /// el estado cacheado directamente — sin hacer otro request HTTP. Esto evita
+  /// el ping duplicado que ocurría cuando SyncService llamaba checkOnline()
+  /// justo después de que _evaluar() ya había hecho uno.
+  ///
+  /// Si la interfaz de red no está activa, devuelve false sin ping.
+  /// Si el caché está vencido, hace un ping HTTP y actualiza el estado.
   Future<bool> checkOnline() async {
+    // Sin interfaz → offline seguro, sin ping
     final results = await _connectivity.checkConnectivity();
-    if (!_checkHasInterface(results)) return false;
-    return ApiService.hayInternetReal();
+    if (!_checkHasInterface(results)) {
+      _updateInterface(false);
+      _update(false);
+      return false;
+    }
+
+    // Estado reciente → devolver caché
+    if (_ultimaVerificacion != null) {
+      final edad = DateTime.now().difference(_ultimaVerificacion!).inSeconds;
+      if (edad < _maxEdadCacheSegundos) {
+        return _isOnline;
+      }
+    }
+
+    // Caché vencido → ping real
+    final online = await ApiService.hayInternetReal();
+    _ultimaVerificacion = DateTime.now();
+    _update(online);
+    return online;
   }
 
   void dispose() {

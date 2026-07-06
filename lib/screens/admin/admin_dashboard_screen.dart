@@ -1,10 +1,10 @@
 // lib/screens/admin/admin_dashboard_screen.dart
 // ─────────────────────────────────────────────────────────────
 // Panel Admin — 4 secciones:
-//   🔒 Modo Kiosko       — local, sin red
-//   ⬇  Descargar datos   — nube → BD local del dispositivo
-//   📦 Productos pending — productos creados offline sin sync
-//   📋 Log traspasos     — historial local con estado de sync
+//   🔒 Modo Kiosko          — local, sin red
+//   ⬇  Descargar datos      — nube → BD local del dispositivo
+//   💾 Backup manual        — exportar BD + enviar por email
+//   📋 Log traspasos        — historial completo con estado de sync
 // ─────────────────────────────────────────────────────────────
 
 import 'package:flutter/material.dart';
@@ -13,11 +13,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/connectivity_service.dart';
 import '../../core/database_service.dart';
 import '../../services/sync_service.dart';
-import '../../services/api_service.dart';
-import '../../services/sync_log_service.dart'; // ← AÑADIDO
+import '../../services/backup_service.dart';
 import '../../main.dart';
 import '../login_screen.dart';
 import '../../widgets/sync_log_panel.dart';
+import '../../widgets/data_usage_panel.dart';
 
 class AdminDashboardScreen extends ConsumerStatefulWidget {
   final Map<String, dynamic> adminData;
@@ -38,10 +38,9 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
   bool _logLoading = true;
   List<Map<String, dynamic>> _logTraspasos = [];
 
-  // ── Productos pendientes de sync ─────────────────────────────────────────
-  bool _productosLoading       = true;
-  bool _productosSyncLoading   = false;
-  List<Map<String, dynamic>> _productosPendientes = [];
+  bool _backupLoading = false;
+  String? _backupMsg;
+  bool?   _backupOk;
 
   late AnimationController _animCtrl;
   late Animation<double>   _fadeAnim;
@@ -54,7 +53,6 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
     _fadeAnim = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
     _animCtrl.forward();
     _cargarLog();
-    _cargarProductosPendientes();
   }
 
   @override
@@ -64,101 +62,17 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
   }
 
   // ══════════════════════════════════════════════════════════
-  // CARGAR LOG DE TRASPASOS
+  // CARGAR LOG DE TRASPASOS — todos, hasta 1000
   // ══════════════════════════════════════════════════════════
   Future<void> _cargarLog() async {
     setState(() => _logLoading = true);
     final db   = DatabaseService();
-    final data = await db.getUltimosTraspasos(limite: 50);
+    final data = await db.getUltimosTraspasos(limite: 1000);
     if (mounted) {
       setState(() {
         _logTraspasos = data;
         _logLoading   = false;
       });
-    }
-  }
-
-  // ══════════════════════════════════════════════════════════
-  // CARGAR PRODUCTOS PENDIENTES DE SYNC
-  // ══════════════════════════════════════════════════════════
-  Future<void> _cargarProductosPendientes() async {
-    setState(() => _productosLoading = true);
-    final db = DatabaseService();
-    final db_ = await db.database;
-    final rows = await db_.query(
-      'productos_local',
-      where: 'pendiente_sync = 1',
-      orderBy: 'id DESC',
-    );
-    if (mounted) {
-      setState(() {
-        _productosPendientes = rows.map((r) => Map<String, dynamic>.from(r)).toList();
-        _productosLoading    = false;
-      });
-    }
-  }
-
-  // ══════════════════════════════════════════════════════════
-  // SINCRONIZAR PRODUCTOS PENDIENTES
-  // ══════════════════════════════════════════════════════════
-  Future<void> _sincronizarProductosPendientes() async {
-    if (_productosPendientes.isEmpty) return;
-
-    final online = ConnectivityService().isOnline;
-    if (!online) {
-      _showSnack('Sin conexión a internet', success: false);
-      return;
-    }
-
-    setState(() => _productosSyncLoading = true);
-
-    int ok      = 0;
-    int errores = 0;
-
-    for (final p in _productosPendientes) {
-      // ── AÑADIDO: registrar inicio en el log ──────────────
-      await SyncLogService().agregar(
-        tipo:    SyncLogTipo.producto,
-        estado:  SyncLogEstado.enProceso,
-        mensaje: 'Subiendo: ${p['Desc_Referencia'] ?? p['EAN']}',
-      );
-
-      final result = await ApiService.agregarProducto(
-        ean           : p['EAN']?.toString()             ?? '',
-        descReferencia: p['Desc_Referencia']?.toString() ?? '',
-        precio        : (p['Precio'] as num?)?.toDouble() ?? 0,
-      );
-
-      if (result['status'] == 'ok') {
-        ok++;
-        // ── AÑADIDO: marcar ok en el log ─────────────────
-        await SyncLogService().actualizarUltimo(
-          tipo:         SyncLogTipo.producto,
-          nuevoEstado:  SyncLogEstado.ok,
-          nuevoMensaje: '✓ ${p['Desc_Referencia'] ?? p['EAN']}',
-        );
-      } else {
-        errores++;
-        // ── AÑADIDO: marcar error en el log ──────────────
-        await SyncLogService().actualizarUltimo(
-          tipo:         SyncLogTipo.producto,
-          nuevoEstado:  SyncLogEstado.fallido,
-          nuevoMensaje: '✗ ${p['Desc_Referencia'] ?? p['EAN']}',
-          detalle:      result.toString(),
-        );
-      }
-    }
-
-    await _cargarProductosPendientes();
-
-    if (mounted) {
-      setState(() => _productosSyncLoading = false);
-      _showSnack(
-        errores == 0
-            ? '✅ $ok producto${ok == 1 ? '' : 's'} sincronizado${ok == 1 ? '' : 's'}'
-            : '⚠ $ok OK · $errores con error',
-        success: errores == 0,
-      );
     }
   }
 
@@ -241,6 +155,40 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
       resultado.exitoso ? 'Descarga completada' : resultado.mensaje,
       success: resultado.exitoso,
     );
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // 💾 BACKUP MANUAL
+  // ══════════════════════════════════════════════════════════
+  Future<void> _hacerBackup() async {
+    final confirm = await _showConfirmDialog(
+      title:       'Generar Backup',
+      content:     'Se exportará la base de datos completa (.db + .zip)\ny se enviará por email a los administradores.\n¿Continuar?',
+      icon:        Icons.backup_outlined,
+      color:       const Color(0xFF8B5CF6),
+      confirmText: 'GENERAR',
+    );
+    if (confirm != true) return;
+
+    setState(() {
+      _backupLoading = true;
+      _backupMsg     = null;
+      _backupOk      = null;
+    });
+
+    final resultado = await BackupService.ejecutar();
+
+    if (mounted) {
+      setState(() {
+        _backupLoading = false;
+        _backupOk      = resultado.ok;
+        _backupMsg     = resultado.mensaje;
+      });
+      _showSnack(
+        resultado.ok ? '✅ Backup generado correctamente' : resultado.mensaje,
+        success: resultado.ok,
+      );
+    }
   }
 
   // ══════════════════════════════════════════════════════════
@@ -606,10 +554,62 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
 
               const SizedBox(height: 28),
 
-              // ══ PRODUCTOS PENDIENTES DE SYNC ══════════════
-              _sectionLabel('PRODUCTOS PENDIENTES'),
+              // ══ BACKUP MANUAL ════════════════════════════
+              _sectionLabel('BACKUP MANUAL'),
               const SizedBox(height: 12),
-              _productosPendientesCard(online),
+              _AdminCard(
+                icon:        Icons.backup_outlined,
+                iconColor:   const Color(0xFF8B5CF6),
+                title:       'Exportar backup',
+                subtitle:    'BD completa · .sql + .zip · envío por email',
+                statusLabel: '',
+                statusColor: Colors.transparent,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 14),
+                    _syncRow(Icons.storage_outlined,
+                        'Base de datos SQLite completa (.sql)'),
+                    const SizedBox(height: 6),
+                    _syncRow(Icons.folder_zip_outlined,
+                        'Archivo comprimido (.zip)'),
+                    const SizedBox(height: 6),
+                    _syncRow(Icons.email_outlined,
+                        '4 destinatarios: Oscar · Jersan · Iván · Harold '),
+                    const SizedBox(height: 6),
+                    _syncRow(Icons.phone_android_outlined,
+                        'También se guarda en el dispositivo'),
+                    if (_backupMsg != null) ...[
+                      const SizedBox(height: 12),
+                      _resultBox(_backupMsg!, _backupOk ?? false),
+                    ],
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        icon: _backupLoading
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white))
+                            : const Icon(Icons.backup_outlined),
+                        label: Text(_backupLoading
+                            ? 'Generando backup...'
+                            : 'Generar backup ahora'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF8B5CF6),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                        ),
+                        onPressed: _backupLoading ? null : _hacerBackup,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
 
               const SizedBox(height: 28),
 
@@ -617,6 +617,13 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
               _sectionLabel('SINCRONIZACIÓN AUTOMÁTICA'),
               const SizedBox(height: 12),
               const SyncLogPanel(),
+
+              const SizedBox(height: 28),
+
+              // ══ CONSUMO DE DATOS ══════════════════════════
+              _sectionLabel('CONSUMO DE DATOS'),
+              const SizedBox(height: 12),
+              const DataUsagePanel(),
 
               const SizedBox(height: 28),
 
@@ -664,213 +671,33 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen>
                   ),
                 ),
 
-              _logLoading
-                  ? const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(32),
-                        child: CircularProgressIndicator(
-                            color: Color(0xFF4F8CFF)),
-                      ),
-                    )
-                  : _logTraspasos.isEmpty
-                      ? _emptyLog()
-                      : Column(
-                          children: _logTraspasos
-                              .map((t) => _logCard(t))
-                              .toList(),
-                        ),
+              // OPT: reemplaza Column + map().toList() que construía hasta
+              // 1000 _logCard de golpe (todos en memoria, visibles o no).
+              // ListView.builder con shrinkWrap + NeverScrollableScrollPhysics
+              // construye solo los ítems que caben en pantalla y los recicla
+              // al hacer scroll — elimina los Skipped 148-222 frames del log.
+              if (_logLoading)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(32),
+                    child: CircularProgressIndicator(
+                        color: Color(0xFF4F8CFF)),
+                  ),
+                )
+              else if (_logTraspasos.isEmpty)
+                _emptyLog()
+              else
+                ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: _logTraspasos.length,
+                  itemBuilder: (_, i) => _logCard(_logTraspasos[i]),
+                ),
 
               const SizedBox(height: 32),
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  // ══════════════════════════════════════════════════════════
-  // CARD PRODUCTOS PENDIENTES
-  // ══════════════════════════════════════════════════════════
-  Widget _productosPendientesCard(bool online) {
-    final cantidad = _productosPendientes.length;
-    final hayPendientes = cantidad > 0;
-
-    return _AdminCard(
-      icon:        Icons.inventory_2_outlined,
-      iconColor:   const Color(0xFF34D399),
-      title:       'Productos sin sincronizar',
-      subtitle:    'Creados offline · pendientes de subir a nube',
-      statusLabel: hayPendientes ? '$cantidad PENDIENTE${cantidad == 1 ? '' : 'S'}' : 'AL DÍA',
-      statusColor: hayPendientes ? Colors.orange : const Color(0xFF34D399),
-      child: Column(
-        children: [
-          const SizedBox(height: 14),
-
-          // ── Loading ────────────────────────────────────────────────────
-          if (_productosLoading)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 20),
-              child: Center(
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: Color(0xFF34D399)),
-              ),
-            )
-
-          // ── Sin pendientes ─────────────────────────────────────────────
-          else if (!hayPendientes)
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 18),
-              child: const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.check_circle_outline_rounded,
-                      color: Color(0xFF34D399), size: 18),
-                  SizedBox(width: 8),
-                  Text('Todos los productos están sincronizados',
-                      style: TextStyle(color: Colors.white54, fontSize: 13)),
-                ],
-              ),
-            )
-
-          // ── Lista de pendientes ────────────────────────────────────────
-          else ...[
-            ...(_productosPendientes.take(3).map((p) => _productoRow(p))),
-
-            if (cantidad > 3) ...[
-              const SizedBox(height: 6),
-              Center(
-                child: Text(
-                  '+ ${cantidad - 3} más pendiente${cantidad - 3 == 1 ? '' : 's'}',
-                  style: const TextStyle(color: Colors.white38, fontSize: 11),
-                ),
-              ),
-            ],
-
-            const SizedBox(height: 14),
-
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                icon: _productosSyncLoading
-                    ? const SizedBox(
-                        width: 16, height: 16,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white))
-                    : const Icon(Icons.cloud_upload_outlined),
-                label: Text(_productosSyncLoading
-                    ? 'Sincronizando...'
-                    : 'Sincronizar $cantidad producto${cantidad == 1 ? '' : 's'}'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: online
-                      ? const Color(0xFF34D399)
-                      : Colors.white24,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                  padding: const EdgeInsets.symmetric(vertical: 13),
-                ),
-                onPressed: (_productosSyncLoading || !online)
-                    ? null
-                    : _sincronizarProductosPendientes,
-              ),
-            ),
-
-            if (!online) ...[
-              const SizedBox(height: 8),
-              const Row(
-                children: [
-                  Icon(Icons.info_outline, color: Colors.white38, size: 13),
-                  SizedBox(width: 6),
-                  Text(
-                    'Necesitas conexión para sincronizar',
-                    style: TextStyle(color: Colors.white38, fontSize: 11),
-                  ),
-                ],
-              ),
-            ],
-          ],
-
-          // Botón refrescar — siempre visible
-          const SizedBox(height: 10),
-          Align(
-            alignment: Alignment.centerRight,
-            child: GestureDetector(
-              onTap: _productosLoading ? null : _cargarProductosPendientes,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.refresh_rounded,
-                      color: _productosLoading ? Colors.white12 : Colors.white38,
-                      size: 14),
-                  const SizedBox(width: 4),
-                  Text('Actualizar',
-                      style: TextStyle(
-                          color: _productosLoading ? Colors.white12 : Colors.white38,
-                          fontSize: 11)),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── Fila individual de producto pendiente ─────────────────────────────────
-  Widget _productoRow(Map<String, dynamic> p) {
-    final ean    = p['EAN']?.toString()             ?? '—';
-    final desc   = p['Desc_Referencia']?.toString() ?? '—';
-    final precio = (p['Precio'] as num?)?.toDouble() ?? 0.0;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0F1520),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.orange.withValues(alpha: 0.25)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 30, height: 30,
-            decoration: BoxDecoration(
-              color: Colors.orange.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Icon(Icons.cloud_upload_outlined,
-                color: Colors.orange, size: 15),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  desc,
-                  style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'EAN: $ean',
-                  style: const TextStyle(color: Colors.white38, fontSize: 10),
-                ),
-              ],
-            ),
-          ),
-          Text(
-            '\$${precio.toStringAsFixed(0)}',
-            style: const TextStyle(
-                color: Color(0xFF34D399),
-                fontSize: 12,
-                fontWeight: FontWeight.bold),
-          ),
-        ],
       ),
     );
   }

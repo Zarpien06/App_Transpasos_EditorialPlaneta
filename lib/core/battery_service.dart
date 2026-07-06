@@ -13,6 +13,7 @@
 import 'dart:async';
 import 'package:battery_plus/battery_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'trusted_clock_service.dart'; // ← NUEVO: persistir estado del reloj al bajar batería
 
 class BatteryService {
   // ─── Singleton ─────────────────────────────────────────────────────────────
@@ -39,16 +40,16 @@ class BatteryService {
   final StreamController<bool> _chargingController = StreamController<bool>.broadcast();
   final StreamController<bool> _lowBatController   = StreamController<bool>.broadcast();
 
-  Stream<int>  get levelStream       => _levelController.stream;
-  Stream<bool> get isChargingStream  => _chargingController.stream;
-  Stream<bool> get lowBatteryStream  => _lowBatController.stream;
+  Stream<int>  get levelStream      => _levelController.stream;
+  Stream<bool> get isChargingStream => _chargingController.stream;
+  Stream<bool> get lowBatteryStream => _lowBatController.stream;
 
   // ─── Internos ──────────────────────────────────────────────────────────────
   StreamSubscription? _stateSubscription;
   Timer?              _pollingTimer;
 
-  // Polling cada 60 s para refrescar el nivel (battery_plus no emite nivel en stream,
-  // solo el estado de carga). Forzamos lectura periódica para mantener el nivel actualizado.
+  // Polling cada 60 s para refrescar el nivel (battery_plus no emite nivel en
+  // stream, solo el estado de carga). Forzamos lectura periódica.
   static const _pollInterval = Duration(seconds: 60);
 
   bool _initialized = false;
@@ -96,7 +97,7 @@ class BatteryService {
   // ─── Lectura de estado de carga ────────────────────────────────────────────
   Future<void> _refreshCharging() async {
     try {
-      final state = await _battery.batteryState;
+      final state    = await _battery.batteryState;
       final charging = state == BatteryState.charging ||
                        state == BatteryState.full;
       _updateCharging(charging);
@@ -114,10 +115,19 @@ class BatteryService {
       _levelController.add(_level);
     }
 
-    // Emitir alerta si cambió el estado "bajo"
     final nowLow = isLow;
     if (wasLow != nowLow) {
       _lowBatController.add(nowLow);
+
+      // ── Persistir estado del reloj cuando la batería entra en zona baja ───
+      // TrustedClockService guarda el último timestamp visto en SQLite para
+      // poder detectar reinicios o manipulaciones al volver a arrancar.
+      if (nowLow) {
+        TrustedClockService().persistirEstado().catchError((e) {
+          debugPrint('[BatteryService] Error persistiendo reloj: $e');
+        });
+      }
+      // ─────────────────────────────────────────────────────────────────────
     }
   }
 
@@ -130,7 +140,7 @@ class BatteryService {
       _chargingController.add(_isCharging);
     }
 
-    // Revaluar alerta de batería baja (si se conectó el cargador, se apaga la alerta)
+    // Revaluar alerta de batería baja (si se conectó el cargador → apaga alerta)
     final nowLow = isLow;
     if (wasLow != nowLow) {
       _lowBatController.add(nowLow);
